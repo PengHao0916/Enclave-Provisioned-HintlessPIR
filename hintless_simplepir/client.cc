@@ -52,9 +52,22 @@ absl::StatusOr<std::unique_ptr<Client>> Client::Create(
   // Create LinPir clients, one per plaintext modulus in `ts`.
   auto const& rlwe_params = params.linpir_params;
   int num_linpir_instances = rlwe_params.ts.size();
-  if (public_params.prng_seed_linpir_ct_pads_size() != num_linpir_instances) {
+  if (!public_params.has_pool_capacity() || public_params.pool_capacity() == 0 ||
+      public_params.pool_capacity() != params.session_pool_capacity) {
     return absl::InvalidArgumentError(
-        "`public_params` contains incorrect number of PRNG seeds.");
+        "`public_params` contains an invalid pool capacity.");
+  }
+  int expected_pool_entries =
+      public_params.pool_capacity() * num_linpir_instances;
+  if (public_params.prng_seed_linpir_ct_pads_size() != expected_pool_entries ||
+      public_params.linpir_response_hints_size() != expected_pool_entries) {
+    return absl::InvalidArgumentError(
+        "`public_params` contains an incorrect one-time pad pool.");
+  }
+  if (!public_params.has_database_version() ||
+      !public_params.has_pool_epoch()) {
+    return absl::InvalidArgumentError(
+        "`public_params` is missing versioned pool metadata.");
   }
   std::vector<std::unique_ptr<const RlweRnsContext>> rlwe_contexts;
   std::vector<std::unique_ptr<LinPirClient>> linpir_clients;
@@ -84,48 +97,101 @@ absl::StatusOr<std::unique_ptr<Client>> Client::Create(
       RlweRnsContext crt_context,
       RlweRnsContext::Create(rlwe_params.log_n, rlwe_params.ts, /*ps=*/{}, 2));
 
-  // return absl::WrapUnique(new Client(
-  //                params, public_params, // 直接传递 public_params
-  //                std::move(rlwe_contexts), std::move(rlwe_moduli),
-  //                std::move(linpir_clients), std::move(crt_context)));
-
-  //                auto seed_status = rlwe::SingleThreadHkdfPrng::GenerateSeed();
-  //       if (seed_status.ok()) {
-  //   client->client_id_ = seed_status.value();
-  // } else {
-  //   client->client_id_ = "fallback_client_id_001"; 
-  // }
-  //         return client;
   auto client = absl::WrapUnique(new Client(
-                 params, public_params,
-                 std::move(rlwe_contexts), std::move(rlwe_moduli),
-                 std::move(linpir_clients), std::move(crt_context)));
+      params, public_params, std::move(rlwe_contexts), std::move(rlwe_moduli),
+      std::move(linpir_clients), std::move(crt_context)));
 
-  auto seed_status = rlwe::SingleThreadHkdfPrng::GenerateSeed();
-  if (seed_status.ok()) {
-    client->client_id_ = seed_status.value();
+  if (params.prng_type == rlwe::PRNG_TYPE_HKDF) {
+    RLWE_ASSIGN_OR_RETURN(client->client_id_,
+                          rlwe::SingleThreadHkdfPrng::GenerateSeed());
+    RLWE_ASSIGN_OR_RETURN(client->session_linpir_sk_seed_,
+                          rlwe::SingleThreadHkdfPrng::GenerateSeed());
   } else {
-    client->client_id_ = "fallback_client_id_001"; 
-  }
-  auto sk_seed_status = rlwe::SingleThreadHkdfPrng::GenerateSeed();
-  if (sk_seed_status.ok()) {
-    client->session_linpir_sk_seed_ = sk_seed_status.value();
-  } else {
-    return absl::InternalError("Failed to generate LinPIR secret key seed.");
+    RLWE_ASSIGN_OR_RETURN(client->client_id_,
+                          rlwe::SingleThreadChaChaPrng::GenerateSeed());
+    RLWE_ASSIGN_OR_RETURN(client->session_linpir_sk_seed_,
+                          rlwe::SingleThreadChaChaPrng::GenerateSeed());
   }
   return client;
 }
 
-//创建LWE密钥s，以及用s加密过后的LWE密文
+absl::StatusOr<HintlessPirSessionInitRequest>
+Client::GenerateSessionInitRequest() {
+  std::lock_guard<std::mutex> lock(request_mutex_);
+  if (session_init_generated_) {
+    return cached_session_init_request_;
+  }
+  if (linpir_clients_.empty()) {
+    return absl::FailedPreconditionError("No LinPir client available.");
+  }
+  HintlessPirSessionInitRequest request;
+  request.set_client_id(client_id_);
+  request.set_database_version(database_version_);
+  request.set_pool_epoch(pool_epoch_);
+  RLWE_ASSIGN_OR_RETURN(
+      auto gk,
+      linpir_clients_[0]->GenerateGaloisKey(session_linpir_sk_seed_));
+  for (const auto& gk_b : gk.GetKeyB()) {
+    RLWE_ASSIGN_OR_RETURN(*request.add_linpir_gk_bs(),
+                          gk_b.Serialize(rlwe_moduli_));
+  }
+  cached_session_init_request_ = request;
+  session_init_generated_ = true;
+  return cached_session_init_request_;
+}
+
+absl::Status Client::AcceptSessionInitResponse(
+    const HintlessPirSessionInitResponse& response) {
+  std::lock_guard<std::mutex> lock(request_mutex_);
+  if (!session_init_generated_) {
+    return absl::FailedPreconditionError(
+        "Generate the session initialization request first.");
+  }
+  if (!response.has_client_id() || response.client_id() != client_id_ ||
+      !response.has_database_version() ||
+      response.database_version() != database_version_ ||
+      !response.has_pool_epoch() || response.pool_epoch() != pool_epoch_ ||
+      !response.has_pool_capacity() ||
+      response.pool_capacity() != pool_capacity_) {
+    return absl::InvalidArgumentError(
+        "Session acknowledgement does not match the requested session.");
+  }
+  session_ready_ = true;
+  return absl::OkStatus();
+}
+
+absl::Status Client::AbandonOutstandingRequest() {
+  std::lock_guard<std::mutex> lock(request_mutex_);
+  if (!has_outstanding_request_) {
+    return absl::FailedPreconditionError("There is no outstanding request.");
+  }
+  has_outstanding_request_ = false;
+  return absl::OkStatus();
+}
+
 absl::StatusOr<HintlessPirRequest> Client::GenerateRequest(int64_t index) {
+  std::lock_guard<std::mutex> lock(request_mutex_);
+  if (!session_ready_) {
+    return absl::FailedPreconditionError(
+        "The server has not acknowledged session initialization.");
+  }
   if (index < 0 || index >= params_.db_rows * params_.db_cols) {
     return absl::InvalidArgumentError("`index` out of range.");
   }
+  if (has_outstanding_request_) {
+    return absl::FailedPreconditionError(
+        "A request is already outstanding; recover it or burn its token.");
+  }
+  if (next_query_token_ > pool_capacity_) {
+    return absl::ResourceExhaustedError(
+        "The one-time public-component pool is exhausted.");
+  }
+  // Consume before sampling or transmission. All error paths burn this token.
+  const uint64_t query_token = next_query_token_++;
 
   // Step 1. Encrypting the selection vector under LWE.
   lwe::Matrix lwe_pad;
   std::unique_ptr<rlwe::SecurePrng> lwe_enc_prng;
-  std::string prng_seed_linpir_sk;
   if (params_.prng_type == rlwe::PRNG_TYPE_HKDF) {
     RLWE_ASSIGN_OR_RETURN(auto pad_prng, rlwe::SingleThreadHkdfPrng::Create(
                                              prng_seed_lwe_query_pad_));
@@ -136,8 +202,6 @@ absl::StatusOr<HintlessPirRequest> Client::GenerateRequest(int64_t index) {
                           rlwe::SingleThreadHkdfPrng::GenerateSeed());
     RLWE_ASSIGN_OR_RETURN(lwe_enc_prng,
                           rlwe::SingleThreadHkdfPrng::Create(prng_seed_enc));
-    RLWE_ASSIGN_OR_RETURN(prng_seed_linpir_sk,
-                          rlwe::SingleThreadHkdfPrng::GenerateSeed());
 
   } else {
     RLWE_ASSIGN_OR_RETURN(auto pad_prng, rlwe::SingleThreadChaChaPrng::Create(
@@ -149,8 +213,6 @@ absl::StatusOr<HintlessPirRequest> Client::GenerateRequest(int64_t index) {
                           rlwe::SingleThreadChaChaPrng::GenerateSeed());
     RLWE_ASSIGN_OR_RETURN(lwe_enc_prng,
                           rlwe::SingleThreadChaChaPrng::Create(prng_seed_enc));
-    RLWE_ASSIGN_OR_RETURN(prng_seed_linpir_sk,
-                          rlwe::SingleThreadChaChaPrng::GenerateSeed());
   }
   RLWE_ASSIGN_OR_RETURN(
       lwe::SymmetricLweKey lwe_secret_key,
@@ -172,55 +234,33 @@ absl::StatusOr<HintlessPirRequest> Client::GenerateRequest(int64_t index) {
   // Cache the per request state.
   state_ = ClientState{.row_idx = row_idx,
                        .col_idx = col_idx,
-                       .prng_seed_linpir_sk = std::move(prng_seed_linpir_sk)};
+                       .query_token = query_token};
 
   HintlessPirRequest request;
   *request.mutable_ct_query_vector() = SerializeLweCiphertext(query_vector);
+  request.set_client_id(client_id_);
+  request.set_database_version(database_version_);
+  request.set_pool_epoch(pool_epoch_);
+  request.set_query_token(query_token);
 
   // Step 2. Encrypting the LWE secret using LinPir.
   RLWE_RETURN_IF_ERROR(
-      GenerateLinPirRequestInPlace(request, lwe_secret_key.Key()));
+      GenerateLinPirRequestInPlace(request, lwe_secret_key.Key(), query_token));
+  has_outstanding_request_ = true;
   return request;
 }
 
-// absl::Status Client::GenerateLinPirRequestInPlace(
-//     HintlessPirRequest& request, const lwe::Vector& lwe_secret) const {
-//   if (linpir_clients_.empty()) {
-//     return absl::InvalidArgumentError("No LinPir client available.");
-//   }
-
-//   // Encode the LWE secret vector using LinPir plaintext moduli, and also
-//   // generate a GaloisKey which is shared by all LinPir requests.
-//   RlweInteger lwe_modulus = RlweInteger{1} << params_.lwe_modulus_bit_size;
-//   for (int k = 0; k < linpir_clients_.size(); ++k) {
-//     RlweInteger plaintext_modulus = rlwe_contexts_[k]->PlaintextModulus();
-//     std::vector<RlweInteger> lwe_secret_mod_t =
-//         EncodeLweVector(lwe_secret, lwe_modulus, plaintext_modulus);
-//     RLWE_ASSIGN_OR_RETURN(
-//         auto ct, linpir_clients_[k]->EncryptQuery(lwe_secret_mod_t,
-//                                                   state_.prng_seed_linpir_sk));
-//     RLWE_ASSIGN_OR_RETURN(auto ct_b, ct.Component(0));
-//     RLWE_ASSIGN_OR_RETURN(*request.add_linpir_ct_bs(),
-//                           ct_b.Serialize(rlwe_moduli_));
-//   }
-//   RLWE_ASSIGN_OR_RETURN(auto gk, linpir_clients_[0]->GenerateGaloisKey(
-//                                      state_.prng_seed_linpir_sk));
-//   for (auto const& gk_b : gk.GetKeyB()) {
-//     RLWE_ASSIGN_OR_RETURN(*request.add_linpir_gk_bs(),
-//                           gk_b.Serialize(rlwe_moduli_));
-//   }
-//   return absl::OkStatus();
-// }
 absl::Status Client::GenerateLinPirRequestInPlace(
-    HintlessPirRequest& request, const lwe::Vector& lwe_secret) const {
+    HintlessPirRequest& request, const lwe::Vector& lwe_secret,
+    uint64_t query_token) const {
   if (linpir_clients_.empty()) {
     return absl::InvalidArgumentError("No LinPir client available.");
   }
 
-  // 【新增】设置请求的 Client ID
-  request.set_client_id(client_id_);
+  if (query_token == 0 || query_token > pool_capacity_) {
+    return absl::InvalidArgumentError("Query token is outside the pad pool.");
+  }
 
-  // Encode the LWE secret vector using LinPir plaintext moduli...
   RlweInteger lwe_modulus = RlweInteger{1} << params_.lwe_modulus_bit_size;
   for (size_t k = 0; k < linpir_clients_.size(); ++k) {
     RlweInteger plaintext_modulus = rlwe_contexts_[k]->PlaintextModulus();
@@ -228,24 +268,15 @@ absl::Status Client::GenerateLinPirRequestInPlace(
         EncodeLweVector(lwe_secret, lwe_modulus, plaintext_modulus);
     RLWE_ASSIGN_OR_RETURN(
         auto ct, linpir_clients_[k]->EncryptQuery(lwe_secret_mod_t,
-                                                  session_linpir_sk_seed_));
+            session_linpir_sk_seed_,
+            linpir_ct_pad_seeds_[(query_token - 1) *
+                                     linpir_clients_.size() +
+                                 k]));
     RLWE_ASSIGN_OR_RETURN(auto ct_b, ct.Component(0));
     RLWE_ASSIGN_OR_RETURN(*request.add_linpir_ct_bs(),
                           ct_b.Serialize(rlwe_moduli_));
   }
 
-  // 【新增】会话复用逻辑：仅在第一次请求时发送 Galois Key
-  if (!is_gk_sent_) {
-      RLWE_ASSIGN_OR_RETURN(auto gk, linpir_clients_[0]->GenerateGaloisKey(
-                                         session_linpir_sk_seed_));
-      for (auto const& gk_b : gk.GetKeyB()) {
-        RLWE_ASSIGN_OR_RETURN(*request.add_linpir_gk_bs(),
-                              gk_b.Serialize(rlwe_moduli_));
-      }
-      // 标记已发送，后续请求将跳过此块
-      is_gk_sent_ = true; 
-  }
-  
   return absl::OkStatus();
 }
 
@@ -264,6 +295,20 @@ std::vector<Client::RlweInteger> Client::EncodeLweVector(
 
 absl::StatusOr<std::string> Client::RecoverRecord(
     const HintlessPirResponse& response) {
+  std::lock_guard<std::mutex> lock(request_mutex_);
+  if (!has_outstanding_request_) {
+    return absl::FailedPreconditionError(
+        "There is no outstanding request to recover.");
+  }
+  if (!response.has_client_id() || response.client_id() != client_id_ ||
+      !response.has_database_version() ||
+      response.database_version() != database_version_ ||
+      !response.has_pool_epoch() || response.pool_epoch() != pool_epoch_ ||
+      !response.has_query_token() ||
+      response.query_token() != state_.query_token) {
+    return absl::InvalidArgumentError(
+        "`response` does not match the outstanding session query.");
+  }
   int num_shards =
       DivAndRoundUp(params_.db_record_bit_size, params_.lwe_plaintext_bit_size);
   if (response.ct_records_size() != num_shards) {
@@ -272,7 +317,8 @@ absl::StatusOr<std::string> Client::RecoverRecord(
 
   // Recover decryption_parts = Hint * LWE secret = Database * A * LWE secret.
   RLWE_ASSIGN_OR_RETURN(std::vector<lwe::Vector> decryption_parts,
-                        RecoverLweDecryptionParts(response));
+                        RecoverLweDecryptionParts(response,
+                                                  state_.query_token));
 
   // Decrypt the LWE ciphertexts in response.
   std::vector<lwe::Integer> values;
@@ -300,12 +346,18 @@ absl::StatusOr<std::string> Client::RecoverRecord(
     values.push_back(noisy_plaintext.eval()(0));
   }
 
-  return ReconstructRecord(values, params_);
+  std::string record = ReconstructRecord(values, params_);
+  has_outstanding_request_ = false;
+  return record;
 }
 
 absl::StatusOr<std::vector<lwe::Vector>> Client::RecoverLweDecryptionParts(
-    const HintlessPirResponse& response) const {
+    const HintlessPirResponse& response, uint64_t query_token) const {
   using BigInteger = rlwe::uint256;
+
+  if (query_token == 0 || query_token > pool_capacity_) {
+    return absl::InvalidArgumentError("Query token is outside the pad pool.");
+  }
 
   auto plaintext_moduli = crt_context_.MainPrimeModuli();
   int num_linpir_plaintext_moduli = plaintext_moduli.size();
@@ -330,9 +382,12 @@ absl::StatusOr<std::vector<lwe::Vector>> Client::RecoverLweDecryptionParts(
     h.resize(num_linpir_plaintext_moduli);
   }
   for (int k = 0; k < num_linpir_plaintext_moduli; ++k) {
+    size_t response_pad_index =
+        (query_token - 1) * num_linpir_plaintext_moduli + k;
     RLWE_ASSIGN_OR_RETURN(
         auto hint_values_mod_tk,
-        linpir_clients_[k]->Recover(response.linpir_responses(k),linpir_response_pads_[k]));
+        linpir_clients_[k]->Recover(response.linpir_responses(k),
+                                   linpir_response_pads_[response_pad_index]));
     auto mod_params_tk = plaintext_moduli[k]->ModParams();
     for (int i = 0; i < num_shards; ++i) {
       hint_crt_values[i][k].reserve(hint_values_mod_tk[i].size());

@@ -74,6 +74,12 @@ class Client {
       absl::Span<const RlweInteger> query_vector,
       absl::string_view prng_seed_sk);
 
+  // This variant additionally selects a one-time public ciphertext pad.
+  absl::StatusOr<RnsCiphertext> EncryptQuery(
+      absl::Span<const RlweInteger> query_vector,
+      absl::string_view prng_seed_sk,
+      absl::string_view prng_seed_ct_pad);
+
   // Returns a Galois key based on the secret key that is sampled using the
   // given PRNG seed.
   absl::StatusOr<RnsGaloisKey> GenerateGaloisKey(

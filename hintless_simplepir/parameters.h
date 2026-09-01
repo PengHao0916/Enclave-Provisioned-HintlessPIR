@@ -42,6 +42,11 @@ struct Parameters {
   linpir::RlweParameters<RlweInteger> linpir_params;
 
   rlwe::PrngType prng_type;
+
+  // Maximum number of online queries that may reuse one session RLWE secret
+  // and cached Galois key. Every query consumes a distinct LinPIR ciphertext
+  // pad and the matching precomputed response pad.
+  int session_pool_capacity = 2;
 };
 
 }  // namespace hintless_simplepir

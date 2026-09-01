@@ -43,12 +43,30 @@ Server<RlweInteger>::Create(
     const RnsContext* rns_context,
     const std::vector<Database<RlweInteger>*>& databases,
     absl::string_view prng_seed_ct_pad, absl::string_view prng_seed_gk_pad) {
+  return Server<RlweInteger>::Create(
+      parameters, rns_context, databases,
+      std::vector<std::string>{std::string(prng_seed_ct_pad)},
+      prng_seed_gk_pad);
+}
+
+template <typename RlweInteger>
+absl::StatusOr<std::unique_ptr<Server<RlweInteger>>>
+Server<RlweInteger>::Create(
+    const RlweParameters<RlweInteger>& parameters,
+    const RnsContext* rns_context,
+    const std::vector<Database<RlweInteger>*>& databases,
+    const std::vector<std::string>& prng_seed_ct_pads,
+    absl::string_view prng_seed_gk_pad) {
   if (!(parameters.prng_type == rlwe::PRNG_TYPE_HKDF ||
         parameters.prng_type == rlwe::PRNG_TYPE_CHACHA)) {
     return absl::InvalidArgumentError("Invalid `prng_type`.");
   }
   if (rns_context == nullptr) {
     return absl::InvalidArgumentError("`rns_context` must not be null.");
+  }
+  if (prng_seed_ct_pads.empty()) {
+    return absl::InvalidArgumentError(
+        "`prng_seed_ct_pads` must contain at least one seed.");
   }
 
   auto rns_moduli = rns_context->MainPrimeModuli();
@@ -69,7 +87,7 @@ Server<RlweInteger>::Create(
           std::sqrt(parameters.error_variance)));
 
   return absl::WrapUnique(new Server<RlweInteger>(
-      parameters, std::string(prng_seed_ct_pad), std::string(prng_seed_gk_pad),
+      parameters, prng_seed_ct_pads, std::string(prng_seed_gk_pad),
       rns_context, std::move(rns_moduli), std::move(rns_gadget),
       std::move(rns_error_params), databases));
 }
@@ -102,83 +120,168 @@ Server<RlweInteger>::Create(
 
 template <typename RlweInteger>
 absl::Status Server<RlweInteger>::Preprocess() {
-  ct_pads_.clear();
-  ct_sub_pad_digits_.clear();
+  query_pad_states_.clear();
   gk_pads_.clear();
 
-  // Create PRNGs.
-  std::unique_ptr<rlwe::SecurePrng> prng_ct, prng_gk;
-  if (params_.prng_type == rlwe::PRNG_TYPE_HKDF) {
-    RLWE_ASSIGN_OR_RETURN(
-        prng_ct, rlwe::SingleThreadHkdfPrng::Create(prng_seed_ct_pad_));
-    RLWE_ASSIGN_OR_RETURN(
-        prng_gk, rlwe::SingleThreadHkdfPrng::Create(prng_seed_gk_pad_));
-  } else {
-    RLWE_ASSIGN_OR_RETURN(
-        prng_ct, rlwe::SingleThreadChaChaPrng::Create(prng_seed_ct_pad_));
-    RLWE_ASSIGN_OR_RETURN(
-        prng_gk, rlwe::SingleThreadChaChaPrng::Create(prng_seed_gk_pad_));
-  }
-
-  // Expand seed to the "a" part of Enc(query vector)
+  // The Galois-key pad is session invariant and shared by every pool entry.
   int log_n = rns_context_->LogN();
   int gadget_dim = rns_gadget_.Dimension();
-  RLWE_ASSIGN_OR_RETURN(auto ct_pad, RnsPolynomial::SampleUniform(
-                                         log_n, prng_ct.get(), rns_moduli_));
-  RLWE_RETURN_IF_ERROR(ct_pad.NegateInPlace(rns_moduli_));
-
-  // Create the "a" part of Galois key
   RLWE_ASSIGN_OR_RETURN(gk_pads_, RnsGaloisKey::SampleRandomPad(
                                       gadget_dim, log_n, rns_moduli_,
                                       prng_seed_gk_pad_, params_.prng_type));
 
-  // Precompute the "a" part of Enc(s << i) and the digits used to generate
-  // Enc(s << i).
-  int num_rotations = params_.rows_per_block / 2;
-  ct_pads_.reserve(num_rotations);
-  ct_pads_.push_back(std::move(ct_pad));
-  ct_sub_pad_digits_.reserve(num_rotations);
-
-  int curr_power = 1;
-  int cyclotomic_order = 1 << (log_n + 1);
-  for (int i = 1; i < num_rotations; ++i) {
-    curr_power = (curr_power * 5) % cyclotomic_order;
-    // ct[i-1].a(X^5)
-    RLWE_ASSIGN_OR_RETURN(RnsPolynomial prev_sub_a,
-                          ct_pads_[i - 1].Substitute(5, rns_moduli_));
-
-    // g^-1(ct[i-1].a(X^5))
-    if (prev_sub_a.IsNttForm()) {
-      RLWE_RETURN_IF_ERROR(prev_sub_a.ConvertToCoeffForm(rns_moduli_));
-    }
-    RLWE_ASSIGN_OR_RETURN(auto prev_sub_a_digits,
-                          rns_gadget_.Decompose(prev_sub_a, rns_moduli_));
-    for (auto& digit : prev_sub_a_digits) {
-      RLWE_RETURN_IF_ERROR(digit.ConvertToNttForm(rns_moduli_));
+  query_pad_states_.reserve(prng_seed_ct_pads_.size());
+  for (const std::string& seed : prng_seed_ct_pads_) {
+    std::unique_ptr<rlwe::SecurePrng> prng_ct;
+    if (params_.prng_type == rlwe::PRNG_TYPE_HKDF) {
+      RLWE_ASSIGN_OR_RETURN(prng_ct,
+                            rlwe::SingleThreadHkdfPrng::Create(seed));
+    } else {
+      RLWE_ASSIGN_OR_RETURN(prng_ct,
+                            rlwe::SingleThreadChaChaPrng::Create(seed));
     }
 
-    // g^-1(ct[i-1].a(X^5))^T * gk.a
-    RLWE_ASSIGN_OR_RETURN(
-        auto curr_a,
-        RnsPolynomial::CreateZero(log_n, rns_moduli_, /*is_ntt=*/true));
-    for (int i = 0; i < prev_sub_a_digits.size(); ++i) {
-      RLWE_RETURN_IF_ERROR(curr_a.FusedMulAddInPlace(prev_sub_a_digits[i],
-                                                     gk_pads_[i], rns_moduli_));
-    }
-    ct_pads_.push_back(std::move(curr_a));
-    ct_sub_pad_digits_.push_back(std::move(prev_sub_a_digits));
-  }
+    QueryPadState pad_state;
+    int num_rotations = params_.rows_per_block / 2;
+    pad_state.ct_pads.reserve(num_rotations);
+    pad_state.ct_sub_pad_digits.reserve(num_rotations - 1);
 
-  // Preprocess the databases using the "a" part of Enc(s << i).
-  for (auto const& database : databases_) {
-    RLWE_RETURN_IF_ERROR(database->Preprocess(ct_pads_));
+    RLWE_ASSIGN_OR_RETURN(auto ct_pad, RnsPolynomial::SampleUniform(
+                                           log_n, prng_ct.get(), rns_moduli_));
+    RLWE_RETURN_IF_ERROR(ct_pad.NegateInPlace(rns_moduli_));
+    pad_state.ct_pads.push_back(std::move(ct_pad));
+
+    for (int i = 1; i < num_rotations; ++i) {
+      RLWE_ASSIGN_OR_RETURN(
+          RnsPolynomial prev_sub_a,
+          pad_state.ct_pads[i - 1].Substitute(5, rns_moduli_));
+      if (prev_sub_a.IsNttForm()) {
+        RLWE_RETURN_IF_ERROR(prev_sub_a.ConvertToCoeffForm(rns_moduli_));
+      }
+      RLWE_ASSIGN_OR_RETURN(auto prev_sub_a_digits,
+                            rns_gadget_.Decompose(prev_sub_a, rns_moduli_));
+      for (auto& digit : prev_sub_a_digits) {
+        RLWE_RETURN_IF_ERROR(digit.ConvertToNttForm(rns_moduli_));
+      }
+
+      RLWE_ASSIGN_OR_RETURN(
+          auto curr_a,
+          RnsPolynomial::CreateZero(log_n, rns_moduli_, /*is_ntt=*/true));
+      for (int j = 0; j < prev_sub_a_digits.size(); ++j) {
+        RLWE_RETURN_IF_ERROR(curr_a.FusedMulAddInPlace(
+            prev_sub_a_digits[j], gk_pads_[j], rns_moduli_));
+      }
+      pad_state.ct_pads.push_back(std::move(curr_a));
+      pad_state.ct_sub_pad_digits.push_back(std::move(prev_sub_a_digits));
+    }
+
+    pad_state.response_pads.reserve(databases_.size());
+    for (const auto* database : databases_) {
+      RLWE_ASSIGN_OR_RETURN(
+          auto response_pads,
+          database->ComputePadInnerProducts(pad_state.ct_pads));
+      pad_state.response_pads.push_back(std::move(response_pads));
+    }
+    query_pad_states_.push_back(std::move(pad_state));
   }
   return absl::OkStatus();
 }
 
 template <typename RlweInteger>
+absl::StatusOr<const typename Server<RlweInteger>::QueryPadState*>
+Server<RlweInteger>::PadStateForToken(uint64_t query_token) const {
+  if (query_token == 0 || query_token > query_pad_states_.size()) {
+    return absl::InvalidArgumentError("Query token is outside the pad pool.");
+  }
+  return &query_pad_states_[query_token - 1];
+}
+
+template <typename RlweInteger>
+absl::Status Server<RlweInteger>::CacheGaloisKey(
+    absl::string_view session_id,
+    const google::protobuf::RepeatedPtrField<
+        ::rlwe::SerializedRnsPolynomial>& proto_gk_key_bs) const {
+  if (session_id.empty()) {
+    return absl::InvalidArgumentError("Session ID must not be empty.");
+  }
+  if (proto_gk_key_bs.empty()) {
+    return absl::InvalidArgumentError("Galois key must not be empty.");
+  }
+  std::vector<RnsPolynomial> gk_key_bs;
+  gk_key_bs.reserve(proto_gk_key_bs.size());
+  for (const auto& proto_poly : proto_gk_key_bs) {
+    RLWE_ASSIGN_OR_RETURN(
+        RnsPolynomial gk_key_b,
+        RnsPolynomial::Deserialize(proto_poly, rns_moduli_));
+    gk_key_bs.push_back(std::move(gk_key_b));
+  }
+  RLWE_ASSIGN_OR_RETURN(
+      RnsGaloisKey gk,
+      RnsGaloisKey::CreateFromKeyComponents(
+          gk_pads_, std::move(gk_key_bs), /*power=*/5, &rns_gadget_,
+          rns_moduli_, prng_seed_gk_pad_, params_.prng_type));
+  auto shared_gk = std::make_shared<const RnsGaloisKey>(std::move(gk));
+  std::lock_guard<std::mutex> lock(gk_cache_mutex_);
+  auto inserted = gk_cache_.emplace(
+      std::string(session_id), SessionKeyState{std::move(shared_gk), 0});
+  if (!inserted.second) {
+    return absl::AlreadyExistsError("Session ID is already initialized.");
+  }
+  return absl::OkStatus();
+}
+
+template <typename RlweInteger>
+void Server<RlweInteger>::RemoveSession(absl::string_view session_id) const {
+  std::lock_guard<std::mutex> lock(gk_cache_mutex_);
+  gk_cache_.erase(std::string(session_id));
+}
+
+template <typename RlweInteger>
+void Server<RlweInteger>::ClearSessionCache() const {
+  std::lock_guard<std::mutex> lock(gk_cache_mutex_);
+  gk_cache_.clear();
+}
+
+template <typename RlweInteger>
 absl::StatusOr<LinPirResponse> Server<RlweInteger>::HandleRequest(
     const RnsCiphertext& ct_query, const RnsGaloisKey& gk) const {
+  // Preserve the full-ciphertext API for callers that do not use the
+  // preprocessed public-component pool.
+  if (query_pad_states_.empty()) {
+    int num_rotations = params_.rows_per_block / 2;
+    std::vector<RnsCiphertext> ct_rotated_queries;
+    ct_rotated_queries.reserve(num_rotations);
+    ct_rotated_queries.push_back(ct_query);
+    for (int i = 1; i < num_rotations; ++i) {
+      RLWE_ASSIGN_OR_RETURN(
+          RnsCiphertext ct_sub,
+          ct_rotated_queries[i - 1].Substitute(/*substitution_power=*/5));
+      RLWE_ASSIGN_OR_RETURN(RnsCiphertext ct_rot, gk.ApplyTo(ct_sub));
+      ct_rotated_queries.push_back(std::move(ct_rot));
+    }
+
+    LinPirResponse response;
+    for (const auto* database : databases_) {
+      RLWE_ASSIGN_OR_RETURN(std::vector<RnsCiphertext> ct_blocks,
+                            database->InnerProductWith(ct_rotated_queries));
+      LinPirResponse::EncryptedInnerProduct inner_product;
+      for (const auto& ct : ct_blocks) {
+        RLWE_ASSIGN_OR_RETURN(RnsPolynomial ct_b, ct.Component(0));
+        RLWE_ASSIGN_OR_RETURN(*inner_product.add_ct_b_blocks(),
+                              ct_b.Serialize(rns_moduli_));
+      }
+      *response.add_ct_inner_products() = std::move(inner_product);
+    }
+    return response;
+  }
+  RLWE_ASSIGN_OR_RETURN(const QueryPadState* pad_state, PadStateForToken(1));
+  return HandleRequestWithPadState(ct_query, gk, *pad_state);
+}
+
+template <typename RlweInteger>
+absl::StatusOr<LinPirResponse> Server<RlweInteger>::HandleRequestWithPadState(
+    const RnsCiphertext& ct_query, const RnsGaloisKey& gk,
+    const QueryPadState& pad_state) const {
   
   // Compute all rotations of the query vector.
   int num_rotations = params_.rows_per_block / 2;
@@ -190,21 +293,24 @@ absl::StatusOr<LinPirResponse> Server<RlweInteger>::HandleRequest(
     RLWE_ASSIGN_OR_RETURN(RnsCiphertext ct_sub,
                           ct_rotated_queries[i - 1].Substitute(5));
     
-    // 【修复点 1】使用 ApplyToWithRandomPad 和预计算的 pads
     RLWE_ASSIGN_OR_RETURN(RnsCiphertext ct_rot,
                           gk.ApplyToWithRandomPad(
-                              ct_sub, ct_sub_pad_digits_[i - 1], ct_pads_[i]));
+                              ct_sub, pad_state.ct_sub_pad_digits[i - 1],
+                              pad_state.ct_pads[i]));
     ct_rotated_queries.push_back(std::move(ct_rot));
   }
 
   // Compute inner products with the databases and serialize.
   LinPirResponse response;
-  for (auto const& database : databases_) {
+  for (int database_index = 0; database_index < databases_.size();
+       ++database_index) {
+    const auto* database = databases_[database_index];
     LinPirResponse::EncryptedInnerProduct inner_product;
     
-    // 【修复点 2】使用 InnerProductWithPreprocessedPads
     RLWE_ASSIGN_OR_RETURN(std::vector<RnsCiphertext> ct_blocks,
-                          database->InnerProductWithPreprocessedPads(ct_rotated_queries));
+                          database->InnerProductWithPads(
+                              ct_rotated_queries,
+                              pad_state.response_pads[database_index]));
                           
     for (auto const& ct : ct_blocks) {
       RLWE_ASSIGN_OR_RETURN(RnsPolynomial ct_b, ct.Component(0));
@@ -221,12 +327,15 @@ absl::StatusOr<LinPirResponse> Server<RlweInteger>::HandleRequest(
     const ::rlwe::SerializedRnsPolynomial& proto_ct_query_b,
     const google::protobuf::RepeatedPtrField<::rlwe::SerializedRnsPolynomial>&
         proto_gk_key_bs) const {
+  RLWE_ASSIGN_OR_RETURN(const QueryPadState* pad_state, PadStateForToken(1));
+
   // Deserialize the "b" components from request and build the query ciphertext
   // and the Galois key.
   RLWE_ASSIGN_OR_RETURN(
       RnsPolynomial ct_query_b,
       RnsPolynomial::Deserialize(proto_ct_query_b, rns_moduli_));
-  RnsCiphertext ct_query({std::move(ct_query_b), ct_pads_[0]}, rns_moduli_,
+  RnsCiphertext ct_query({std::move(ct_query_b), pad_state->ct_pads[0]},
+                         rns_moduli_,
                          /*power_of_s=*/1, /*error=*/0, &rns_error_params_,
                          rns_context_);
 
@@ -254,17 +363,21 @@ absl::StatusOr<LinPirResponse> Server<RlweInteger>::HandleRequest(
                           ct_rotated_queries[i - 1].Substitute(5));
     RLWE_ASSIGN_OR_RETURN(RnsCiphertext ct_rot,
                           gk.ApplyToWithRandomPad(
-                              ct_sub, ct_sub_pad_digits_[i - 1], ct_pads_[i]));
+                              ct_sub, pad_state->ct_sub_pad_digits[i - 1],
+                              pad_state->ct_pads[i]));
     ct_rotated_queries.push_back(std::move(ct_rot));
   }
 
   // Compute inner products with the databases and serialize them.
   LinPirResponse response;
   response.mutable_ct_inner_products()->Reserve(databases_.size());
-  for (auto const& database : databases_) {
+  for (int database_index = 0; database_index < databases_.size();
+       ++database_index) {
+    const auto* database = databases_[database_index];
     RLWE_ASSIGN_OR_RETURN(
         std::vector<RnsCiphertext> ct_blocks,
-        database->InnerProductWithPreprocessedPads(ct_rotated_queries));
+        database->InnerProductWithPads(
+            ct_rotated_queries, pad_state->response_pads[database_index]));
     LinPirResponse::EncryptedInnerProduct inner_product;
     //inner_product.mutable_ct_blocks()->Reserve(ct_blocks.size());
     inner_product.mutable_ct_b_blocks()->Reserve(ct_blocks.size());
@@ -282,17 +395,26 @@ absl::StatusOr<LinPirResponse> Server<RlweInteger>::HandleRequest(
 
 template <typename RlweInteger>
 absl::StatusOr<LinPirResponse> Server<RlweInteger>::GetResponsePads() const {
-  if (databases_.empty() || !databases_[0]->IsPreprocessed()) {
+  return GetResponsePads(1);
+}
+
+template <typename RlweInteger>
+absl::StatusOr<LinPirResponse> Server<RlweInteger>::GetResponsePads(
+    uint64_t query_token) const {
+  if (databases_.empty() || query_pad_states_.empty()) {
     return absl::FailedPreconditionError(
         "Server has not been preprocessed to get response pads.");
   }
+  RLWE_ASSIGN_OR_RETURN(const QueryPadState* pad_state,
+                        PadStateForToken(query_token));
 
   LinPirResponse response_pads;
   response_pads.mutable_ct_inner_products()->Reserve(databases_.size());
-  for (auto const& database : databases_) {
+  for (int database_index = 0; database_index < databases_.size();
+       ++database_index) {
     LinPirResponse::EncryptedInnerProduct inner_product;
-    absl::Span<const RnsPolynomial> pad_inner_products =
-        database->GetPadInnerProducts();
+    const auto& pad_inner_products =
+        pad_state->response_pads[database_index];
     inner_product.mutable_ct_b_blocks()->Reserve(pad_inner_products.size());
     for (const auto& pad : pad_inner_products) {
       RLWE_ASSIGN_OR_RETURN(*inner_product.add_ct_b_blocks(),
@@ -303,28 +425,27 @@ absl::StatusOr<LinPirResponse> Server<RlweInteger>::GetResponsePads() const {
   return response_pads;
 }
 
-// ================== 新增的 HandleRequest 实现 ==================
-
 template <typename RlweInteger>
 absl::StatusOr<LinPirResponse> Server<RlweInteger>::HandleRequest(
     const LinPirRequest& request) const {
-  // 1. Reconstruct the Query Ciphertext (ct_query)
   if (!request.has_ct_query_b()) {
     return absl::InvalidArgumentError("Missing ct_query_b in request.");
   }
+  uint64_t query_token = request.has_query_token() ? request.query_token() : 1;
+  RLWE_ASSIGN_OR_RETURN(const QueryPadState* pad_state,
+                        PadStateForToken(query_token));
   RLWE_ASSIGN_OR_RETURN(
       RnsPolynomial ct_query_b,
       RnsPolynomial::Deserialize(request.ct_query_b(), rns_moduli_));
-  
-  // 使用预计算的 ct_pads_[0] (即 a 分量) 重建完整的 RLWE 密文
-  // 注意：这里利用了 Server 类的成员变量 ct_pads_
-  RnsCiphertext ct_query({std::move(ct_query_b), ct_pads_[0]}, rns_moduli_,
+
+  RnsCiphertext ct_query(
+      {std::move(ct_query_b), pad_state->ct_pads[0]}, rns_moduli_,
                          /*power_of_s=*/1, /*error=*/0, &rns_error_params_,
                          rns_context_);
 
-  // 2. Handle Galois Key (gk) with Session Caching
+  // The legacy stateless API may still carry a Galois key with the query.
+  // Secure sessions install it separately through CacheGaloisKey().
   if (request.gk_key_bs_size() > 0) {
-    // 情况 A: 请求中包含了 Key (首次请求 或 无状态模式)
     std::vector<RnsPolynomial> gk_key_bs;
     gk_key_bs.reserve(request.gk_key_bs_size());
     for (const auto& proto_poly : request.gk_key_bs()) {
@@ -333,44 +454,38 @@ absl::StatusOr<LinPirResponse> Server<RlweInteger>::HandleRequest(
           RnsPolynomial::Deserialize(proto_poly, rns_moduli_));
       gk_key_bs.push_back(std::move(gk_key_b));
     }
-    
+
     RLWE_ASSIGN_OR_RETURN(
         RnsGaloisKey gk,
         RnsGaloisKey::CreateFromKeyComponents(
             gk_pads_, std::move(gk_key_bs), /*power=*/5, &rns_gadget_,
             rns_moduli_, prng_seed_gk_pad_, params_.prng_type));
 
-    if (request.has_client_id()) {
-        // 如果有 client_id，将 Key 存入缓存
-        // 先删除旧的（如果存在），避免潜在的冲突
-        gk_cache_.erase(request.client_id());
-        // 存入新 Key
-        auto insert_result = gk_cache_.emplace(request.client_id(), std::move(gk));
-        // 使用缓存中的 Key 进行计算
-        return HandleRequest(ct_query, insert_result.first->second);
-    } else {
-        // 无状态模式，直接使用生成的 Key
-        return HandleRequest(ct_query, gk);
-    }
-  } else {
-    // 情况 B: 请求中没有 Key (后续请求)，尝试从缓存查找
-    if (!request.has_client_id()) {
-        return absl::InvalidArgumentError("Missing Galois Key and Client ID.");
-    }
-    
-    // 在 gk_cache_ 中查找
+    return HandleRequestWithPadState(ct_query, gk, *pad_state);
+  }
+
+  if (!request.has_client_id()) {
+    return absl::InvalidArgumentError("Missing Galois Key and Session ID.");
+  }
+  std::shared_ptr<const RnsGaloisKey> gk;
+  {
+    std::lock_guard<std::mutex> lock(gk_cache_mutex_);
     auto it = gk_cache_.find(request.client_id());
     if (it == gk_cache_.end()) {
-        return absl::InvalidArgumentError(
-            "Session key not found or expired for client ID: " + request.client_id());
+      return absl::FailedPreconditionError(
+          "Session key not found or expired for session ID: " +
+          request.client_id());
     }
-    
-    // 使用缓存中的 Key，调用底层的 HandleRequest
-    return HandleRequest(ct_query, it->second);
+    if (query_token <= it->second.last_accepted_token) {
+      return absl::AlreadyExistsError(
+          "Query token has already been consumed for this session.");
+    }
+    it->second.last_accepted_token = query_token;
+    gk = it->second.galois_key;
   }
+  return HandleRequestWithPadState(ct_query, *gk, *pad_state);
 }
 
-// ================== 结束 ==================
 template class Server<Uint32>;
 template class Server<Uint64>;
 

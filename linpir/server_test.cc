@@ -321,7 +321,18 @@ TEST_F(ServerTest, HandleRequestWithPreprocessing) {
 
   // Let the server handle the request with preprocessed data.
   LinPirRequest request = this->SerializeLinPirRequest(ct_query, gk);
-   ASSERT_OK_AND_ASSIGN(LinPirResponse response, server->HandleRequest(request));
+  ASSERT_OK_AND_ASSIGN(LinPirResponse response, server->HandleRequest(request));
+
+  // The session API consumes its token in the LinPIR layer as well, so a
+  // caller cannot bypass the HintlessPIR wrapper to reuse a ciphertext pad.
+  ASSERT_OK(server->CacheGaloisKey("test-session", request.gk_key_bs()));
+  LinPirRequest session_request = request;
+  session_request.clear_gk_key_bs();
+  session_request.set_client_id("test-session");
+  session_request.set_query_token(1);
+  ASSERT_OK(server->HandleRequest(session_request));
+  EXPECT_THAT(server->HandleRequest(session_request),
+              StatusIs(absl::StatusCode::kAlreadyExists));
 
   // The response should contain one inner product as there is one database
   // held by the server, and the inner product contains one ciphertext, as

@@ -16,7 +16,9 @@
 #ifndef HINTLESS_PIR_LINPIR_SERVER_H_
 #define HINTLESS_PIR_LINPIR_SERVER_H_
 
+#include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -78,6 +80,14 @@ class Server {
       const std::vector<Database<RlweInteger>*>& databases,
       absl::string_view prng_seed_ct_pad, absl::string_view prng_seed_gk_pad);
 
+  // Creates a server with a bounded, token-indexed pool of ciphertext pads.
+  static absl::StatusOr<std::unique_ptr<Server>> Create(
+      const RlweParameters<RlweInteger>& parameters,
+      const RnsContext* rns_context,
+      const std::vector<Database<RlweInteger>*>& databases,
+      const std::vector<std::string>& prng_seed_ct_pads,
+      absl::string_view prng_seed_gk_pad);
+
   // Preprocess the ciphertext automorphisms and database inner products.
   absl::Status Preprocess();
 
@@ -103,12 +113,24 @@ class Server {
   absl::StatusOr<LinPirResponse> HandleRequest(const RnsCiphertext& ct_query,
                                                const RnsGaloisKey& gk) const;
 
-// Returns the "a" components of the LinPir response ciphertexts.
+  // Returns the "a" components matching a one-based query token.
+  absl::StatusOr<LinPirResponse> GetResponsePads(uint64_t query_token) const;
+
+  // Returns the first token's pads for the legacy one-token API.
   absl::StatusOr<LinPirResponse> GetResponsePads() const;
+
+  // Installs or removes session-scoped Galois keys. Query handling never
+  // installs a key implicitly in the secure session API.
+  absl::Status CacheGaloisKey(
+      absl::string_view session_id,
+      const google::protobuf::RepeatedPtrField<rlwe::SerializedRnsPolynomial>&
+          proto_gk_key_bs) const;
+  void RemoveSession(absl::string_view session_id) const;
+  void ClearSessionCache() const;
 
   // Accessors to the PRNG seeds for generating a LinPir request.
   absl::string_view PrngSeedForCiphertextRandomPads() const {
-    return prng_seed_ct_pad_;
+    return prng_seed_ct_pads_.front();
   }
   absl::string_view PrngSeedForGaloisKeyRandomPads() const {
     return prng_seed_gk_pad_;
@@ -116,23 +138,37 @@ class Server {
 
  private:
   explicit Server(RlweParameters<RlweInteger> params,
-                  std::string prng_seed_ct_pad, std::string prng_seed_gk_pad,
+                  std::vector<std::string> prng_seed_ct_pads,
+                  std::string prng_seed_gk_pad,
                   const RnsContext* rns_context,
                   std::vector<const PrimeModulus*> rns_moduli,
                   RnsGadget rns_gadget, RnsErrorParams rns_error_params,
                   std::vector<Database<RlweInteger>*> databases)
       : params_(std::move(params)),
-        prng_seed_ct_pad_(std::move(prng_seed_ct_pad)),
+        prng_seed_ct_pads_(std::move(prng_seed_ct_pads)),
         prng_seed_gk_pad_(std::move(prng_seed_gk_pad)),
         rns_context_(rns_context),
         rns_moduli_(std::move(rns_moduli)),
-        rns_error_params_(std::move(rns_error_params)),
         rns_gadget_(std::move(rns_gadget)),
+        rns_error_params_(std::move(rns_error_params)),
         databases_(std::move(databases)) {}
 
   const RlweParameters<RlweInteger> params_;
 
-  std::string prng_seed_ct_pad_;
+  struct QueryPadState {
+    std::vector<RnsPolynomial> ct_pads;
+    std::vector<std::vector<RnsPolynomial>> ct_sub_pad_digits;
+    // One vector of block pads per database.
+    std::vector<std::vector<RnsPolynomial>> response_pads;
+  };
+
+  absl::StatusOr<const QueryPadState*> PadStateForToken(
+      uint64_t query_token) const;
+  absl::StatusOr<LinPirResponse> HandleRequestWithPadState(
+      const RnsCiphertext& ct_query, const RnsGaloisKey& gk,
+      const QueryPadState& pad_state) const;
+
+  std::vector<std::string> prng_seed_ct_pads_;
   std::string prng_seed_gk_pad_;
 
   const RnsContext* rns_context_;
@@ -143,12 +179,16 @@ class Server {
   // Holding the matrices via mutable pointers to perform preprocessing tasks.
   std::vector<Database<RlweInteger>*> databases_;
 
-  // Preprocessed polynomials to be used in `HandleRequest`.
-  std::vector<RnsPolynomial> ct_pads_;
-  std::vector<std::vector<RnsPolynomial>> ct_sub_pad_digits_;
+  // Token-indexed preprocessed polynomials used in `HandleRequest`.
+  std::vector<QueryPadState> query_pad_states_;
   std::vector<RnsPolynomial> gk_pads_;
 
-  mutable std::map<std::string, RnsGaloisKey> gk_cache_;
+  struct SessionKeyState {
+    std::shared_ptr<const RnsGaloisKey> galois_key;
+    uint64_t last_accepted_token = 0;
+  };
+  mutable std::map<std::string, SessionKeyState> gk_cache_;
+  mutable std::mutex gk_cache_mutex_;
 };
 
 }  // namespace linpir

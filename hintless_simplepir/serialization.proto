@@ -28,16 +28,37 @@ message HintlessPirServerPublicParams {
   // The PRNG seed for sampling the "A" matrix of LWE query ciphertext.
   optional bytes prng_seed_lwe_query_pad = 1;
 
-  // The PRNG seeds for sampling the "a" polynomial of each LinPIR query
-  // ciphertext.
+  // Token-major pool of PRNG seeds for sampling the "a" polynomial of each
+  // LinPIR query ciphertext. For token t and CRT instance k, the seed is at
+  // index (t - 1) * num_linpir_instances + k for one-based token t.
   repeated bytes prng_seed_linpir_ct_pads = 2;
 
   // The PRNG seed for sampling the "a" polynomials in the Galois automorphism
   // key shared by all LinPIR instances.
   optional bytes prng_seed_linpir_gk_pad = 3;
-  //新增字段用于存放hint(a_parts)
+  // Token-major pool of matching public response components. The indexing is
+  // identical to prng_seed_linpir_ct_pads. Every entry is one-time use within
+  // a client session.
   repeated LinPirResponse linpir_response_hints = 4;
 
+  optional bytes database_version = 5;
+  optional uint64 pool_epoch = 6;
+  optional uint64 pool_capacity = 7;
+}
+
+// Installs one session-scoped Galois key before online queries begin.
+message HintlessPirSessionInitRequest {
+  optional string client_id = 1;
+  optional bytes database_version = 2;
+  optional uint64 pool_epoch = 3;
+  repeated rlwe.SerializedRnsPolynomial linpir_gk_bs = 4;
+}
+
+message HintlessPirSessionInitResponse {
+  optional string client_id = 1;
+  optional bytes database_version = 2;
+  optional uint64 pool_epoch = 3;
+  optional uint64 pool_capacity = 4;
 }
 
 message HintlessPirRequest {
@@ -46,15 +67,23 @@ message HintlessPirRequest {
   // The "b" components of the LinPir ciphertexts that encrypt the LWE secrets.
   repeated rlwe.SerializedRnsPolynomial linpir_ct_bs = 2;
 
-  // The "b" components of the Galois key for all LinPir requests.
+  // Legacy field. Secure online requests install the key through
+  // HintlessPirSessionInitRequest and must leave this field empty.
   repeated rlwe.SerializedRnsPolynomial linpir_gk_bs = 3;
 
   optional string client_id = 4;
+  optional bytes database_version = 5;
+  optional uint64 pool_epoch = 6;
+  optional uint64 query_token = 7;
 }
 
 message HintlessPirResponse {
   repeated SerializedLweCiphertext ct_records = 1;
   repeated LinPirResponse linpir_responses = 2;
+  optional string client_id = 3;
+  optional bytes database_version = 4;
+  optional uint64 pool_epoch = 5;
+  optional uint64 query_token = 6;
 }
 
 // This is the "b" part of a LWE ciphertext (A, b), where the "A" part is

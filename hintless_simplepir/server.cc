@@ -21,9 +21,6 @@
 #include <string>
 #include <utility>
 #include <vector>
-#include <thread> 
-#include <future> 
-#include <stdexcept>
 
 #include "Eigen/Core"
 #include "absl/memory/memory.h"
@@ -50,6 +47,10 @@ inline absl::Status CheckForValidPrngType(const Parameters& params) {
   if (!(params.prng_type == rlwe::PRNG_TYPE_HKDF ||
         params.prng_type == rlwe::PRNG_TYPE_CHACHA)) {
     return absl::InvalidArgumentError("Invalid PRNG type in `params`.");
+  }
+  if (params.session_pool_capacity <= 0) {
+    return absl::InvalidArgumentError(
+        "`session_pool_capacity` must be positive.");
   }
   return absl::OkStatus();
 }
@@ -108,15 +109,20 @@ absl::StatusOr<std::unique_ptr<Server>> Server::CreateWithRandomDatabaseRecords(
 
 absl::Status Server::GeneratePublicParams() {
   int num_linpir_instances = params_.linpir_params.ts.size();
+  prng_seed_linpir_ct_pad_pool_.assign(
+      params_.session_pool_capacity,
+      std::vector<std::string>(num_linpir_instances));
   if (params_.prng_type == rlwe::PRNG_TYPE_HKDF) {
-    // Sample PRNG seeds for LWE "A" matrix and LinPIR.
     RLWE_ASSIGN_OR_RETURN(prng_seed_lwe_query_pad_,
                           rlwe::SingleThreadHkdfPrng::GenerateSeed());
-    prng_seed_linpir_ct_pads_.clear();
-    prng_seed_linpir_ct_pads_.resize(num_linpir_instances);
-    for (int i = 0; i < num_linpir_instances; ++i) {
-      RLWE_ASSIGN_OR_RETURN(prng_seed_linpir_ct_pads_[i],
-                            rlwe::SingleThreadHkdfPrng::GenerateSeed());
+    RLWE_ASSIGN_OR_RETURN(database_version_,
+                          rlwe::SingleThreadHkdfPrng::GenerateSeed());
+    for (int token = 0; token < params_.session_pool_capacity; ++token) {
+      for (int i = 0; i < num_linpir_instances; ++i) {
+        RLWE_ASSIGN_OR_RETURN(
+            prng_seed_linpir_ct_pad_pool_[token][i],
+            rlwe::SingleThreadHkdfPrng::GenerateSeed());
+      }
     }
     RLWE_ASSIGN_OR_RETURN(prng_seed_linpir_gk_pad_,
                           rlwe::SingleThreadHkdfPrng::GenerateSeed());
@@ -130,11 +136,14 @@ absl::Status Server::GeneratePublicParams() {
   } else {
     RLWE_ASSIGN_OR_RETURN(prng_seed_lwe_query_pad_,
                           rlwe::SingleThreadChaChaPrng::GenerateSeed());
-    prng_seed_linpir_ct_pads_.clear();
-    prng_seed_linpir_ct_pads_.resize(num_linpir_instances);
-    for (int i = 0; i < num_linpir_instances; ++i) {
-      RLWE_ASSIGN_OR_RETURN(prng_seed_linpir_ct_pads_[i],
-                            rlwe::SingleThreadChaChaPrng::GenerateSeed());
+    RLWE_ASSIGN_OR_RETURN(database_version_,
+                          rlwe::SingleThreadChaChaPrng::GenerateSeed());
+    for (int token = 0; token < params_.session_pool_capacity; ++token) {
+      for (int i = 0; i < num_linpir_instances; ++i) {
+        RLWE_ASSIGN_OR_RETURN(
+            prng_seed_linpir_ct_pad_pool_[token][i],
+            rlwe::SingleThreadChaChaPrng::GenerateSeed());
+      }
     }
     RLWE_ASSIGN_OR_RETURN(prng_seed_linpir_gk_pad_,
                           rlwe::SingleThreadChaChaPrng::GenerateSeed());
@@ -146,6 +155,7 @@ absl::Status Server::GeneratePublicParams() {
         lwe::ExpandPad(params_.db_cols, params_.lwe_secret_dim, prng.get()));
     lwe_query_pad_ = std::make_unique<const lwe::Matrix>(std::move(pad));
   }
+  ++pool_epoch_;
   return absl::OkStatus();
 }
 
@@ -173,6 +183,14 @@ std::vector<std::vector<Integer>> EncodeLweMatrix(
 }  // namespace
 
 absl::Status Server::Preprocess() {
+  preprocessed_ = false;
+  // A new database version invalidates every existing session and unused
+  // public-component token.
+  {
+    std::lock_guard<std::mutex> lock(sessions_mutex_);
+    sessions_.clear();
+  }
+
   // Refresh the PRNG seeds.
   RLWE_RETURN_IF_ERROR(GeneratePublicParams());
 
@@ -208,26 +226,79 @@ absl::Status Server::Preprocess() {
                    linpir_databases_mod_tk.end(),
                    std::back_inserter(linpir_databases_ptrs),
                    [](auto& ptr) { return ptr.get(); });
+    std::vector<std::string> token_seeds;
+    token_seeds.reserve(params_.session_pool_capacity);
+    for (int token = 0; token < params_.session_pool_capacity; ++token) {
+      token_seeds.push_back(prng_seed_linpir_ct_pad_pool_[token][k]);
+    }
     RLWE_ASSIGN_OR_RETURN(
         auto linpir_server_mod_tk,
         LinPirServer::Create(params_.linpir_params, rlwe_contexts_[k].get(),
-                             linpir_databases_ptrs,
-                             prng_seed_linpir_ct_pads_[k],
+                             linpir_databases_ptrs, token_seeds,
                              prng_seed_linpir_gk_pad_));
     RLWE_RETURN_IF_ERROR(linpir_server_mod_tk->Preprocess());
 
     linpir_databases_[k] = std::move(linpir_databases_mod_tk);
     linpir_servers_[k] = std::move(linpir_server_mod_tk);
   }
-// Get the response pads (hints) from all LinPIR servers.
-  linpir_response_pads_.clear();
-  linpir_response_pads_.reserve(linpir_servers_.size());
-  for (int k = 0; k < linpir_servers_.size(); ++k) {
-  RLWE_ASSIGN_OR_RETURN(auto response_pads,
-                        linpir_servers_[k]->GetResponsePads());
-  linpir_response_pads_.push_back(std::move(response_pads));
-}
+  // Export the matching public response component for every token and CRT
+  // instance. The client consumes this pool one entry at a time.
+  linpir_response_pad_pool_.assign(params_.session_pool_capacity, {});
+  for (int token = 0; token < params_.session_pool_capacity; ++token) {
+    linpir_response_pad_pool_[token].reserve(linpir_servers_.size());
+    for (int k = 0; k < linpir_servers_.size(); ++k) {
+      RLWE_ASSIGN_OR_RETURN(
+          auto response_pads,
+          linpir_servers_[k]->GetResponsePads(token + 1));
+      linpir_response_pad_pool_[token].push_back(std::move(response_pads));
+    }
+  }
+  preprocessed_ = true;
   return absl::OkStatus();
+}
+
+absl::StatusOr<HintlessPirSessionInitResponse> Server::InitializeSession(
+    const HintlessPirSessionInitRequest& request) {
+  if (!IsPreprocessed()) {
+    return absl::FailedPreconditionError("Server has not been preprocessed.");
+  }
+  if (!request.has_client_id() || request.client_id().empty()) {
+    return absl::InvalidArgumentError("Missing session ID.");
+  }
+  if (!request.has_database_version() ||
+      request.database_version() != database_version_ ||
+      !request.has_pool_epoch() || request.pool_epoch() != pool_epoch_) {
+    return absl::FailedPreconditionError(
+        "Session initialization uses a stale database version or pool epoch.");
+  }
+  if (request.linpir_gk_bs_size() == 0) {
+    return absl::InvalidArgumentError("Missing session Galois key.");
+  }
+  std::lock_guard<std::mutex> lock(sessions_mutex_);
+  if (sessions_.find(request.client_id()) != sessions_.end()) {
+    return absl::AlreadyExistsError("Session ID is already initialized.");
+  }
+
+  int cached_servers = 0;
+  for (const auto& linpir_server : linpir_servers_) {
+    absl::Status status = linpir_server->CacheGaloisKey(
+        request.client_id(), request.linpir_gk_bs());
+    if (!status.ok()) {
+      for (int i = 0; i < cached_servers; ++i) {
+        linpir_servers_[i]->RemoveSession(request.client_id());
+      }
+      return status;
+    }
+    ++cached_servers;
+  }
+  sessions_.emplace(request.client_id(), SessionState{});
+
+  HintlessPirSessionInitResponse response;
+  response.set_client_id(request.client_id());
+  response.set_database_version(database_version_);
+  response.set_pool_epoch(pool_epoch_);
+  response.set_pool_capacity(params_.session_pool_capacity);
+  return response;
 }
 
 absl::StatusOr<HintlessPirResponse> Server::HandleRequest(
@@ -235,8 +306,46 @@ absl::StatusOr<HintlessPirResponse> Server::HandleRequest(
   if (!IsPreprocessed()) {
     return absl::FailedPreconditionError("Server has not been preprocessed.");
   }
+  if (!request.has_client_id() || request.client_id().empty()) {
+    return absl::InvalidArgumentError("Missing session ID.");
+  }
+  if (!request.has_database_version() ||
+      request.database_version() != database_version_ ||
+      !request.has_pool_epoch() || request.pool_epoch() != pool_epoch_) {
+    return absl::FailedPreconditionError(
+        "Request uses a stale database version or pool epoch.");
+  }
+  if (!request.has_query_token() || request.query_token() == 0 ||
+      request.query_token() > params_.session_pool_capacity) {
+    return absl::InvalidArgumentError("Request token is outside the pool.");
+  }
+  if (request.linpir_gk_bs_size() != 0) {
+    return absl::InvalidArgumentError(
+        "Online requests must not carry a Galois key; initialize the session "
+        "first.");
+  }
+  {
+    std::lock_guard<std::mutex> lock(sessions_mutex_);
+    auto session_it = sessions_.find(request.client_id());
+    if (session_it == sessions_.end()) {
+      return absl::FailedPreconditionError(
+          "Session is not initialized or was invalidated.");
+    }
+    if (request.query_token() <= session_it->second.last_accepted_token) {
+      return absl::AlreadyExistsError(
+          "Query token has already been consumed.");
+    }
+
+    // Compare and consume atomically. If any later operation fails, the token
+    // remains burned and a retry must use a larger token.
+    session_it->second.last_accepted_token = request.query_token();
+  }
 
   HintlessPirResponse response;
+  response.set_client_id(request.client_id());
+  response.set_database_version(database_version_);
+  response.set_pool_epoch(pool_epoch_);
+  response.set_query_token(request.query_token());
   // Handle the LWE part of the request.
   Database::LweVector ct_query_vector =
       DeserializeLweCiphertext(request.ct_query_vector());
@@ -246,19 +355,6 @@ absl::StatusOr<HintlessPirResponse> Server::HandleRequest(
     *response.add_ct_records() = SerializeLweCiphertext(ct_record);
   }
 
-  // // Handle the LinPIR requests.
-  // int num_linpir_requests = request.linpir_ct_bs_size();
-  // if (num_linpir_requests != linpir_servers_.size()) {
-  //   return absl::InvalidArgumentError(
-  //       "`request` contains unexpected number of LinPir requests.");
-  // }
-  
-  // for (int k = 0; k < num_linpir_requests; ++k) {
-  //   RLWE_ASSIGN_OR_RETURN(LinPirResponse linpir_response,
-  //                         linpir_servers_[k]->HandleRequest(
-  //                             request.linpir_ct_bs(k), request.linpir_gk_bs()));
-  //   *response.add_linpir_responses() = std::move(linpir_response);
-  // }
   // Handle the LinPIR requests.
   int num_linpir_requests = request.linpir_ct_bs_size();
   if (num_linpir_requests != linpir_servers_.size()) {
@@ -267,24 +363,10 @@ absl::StatusOr<HintlessPirResponse> Server::HandleRequest(
   }
   
   for (int k = 0; k < num_linpir_requests; ++k) {
-    // 【修正】构造一个完整的 LinPirRequest 对象，以传递 client_id
     LinPirRequest linpir_req;
-    
-    // 1. 填充 Query 部分
     *linpir_req.mutable_ct_query_b() = request.linpir_ct_bs(k);
-    
-    // 2. 填充 Key 部分 (如果有的话)
-    // 注意：request.linpir_gk_bs() 是所有分片共享的，在第二次请求时为空，这里直接复制即可
-    if (request.linpir_gk_bs_size() > 0) {
-        *linpir_req.mutable_gk_key_bs() = request.linpir_gk_bs();
-    }
-    
-    // 3. 【关键】透传 Client ID
-    if (request.has_client_id()) {
-        linpir_req.set_client_id(request.client_id());
-    }
-
-    // 调用支持缓存的新接口 HandleRequest(const LinPirRequest&)
+    linpir_req.set_client_id(request.client_id());
+    linpir_req.set_query_token(request.query_token());
     RLWE_ASSIGN_OR_RETURN(LinPirResponse linpir_response,
                           linpir_servers_[k]->HandleRequest(linpir_req));
                           
@@ -296,14 +378,20 @@ absl::StatusOr<HintlessPirResponse> Server::HandleRequest(
 HintlessPirServerPublicParams Server::GetPublicParams() const {
   HintlessPirServerPublicParams output;
   output.set_prng_seed_lwe_query_pad(prng_seed_lwe_query_pad_);
-  for (auto const& prng_seed : prng_seed_linpir_ct_pads_) {
-    *output.add_prng_seed_linpir_ct_pads() = prng_seed;
+  for (const auto& token_seeds : prng_seed_linpir_ct_pad_pool_) {
+    for (const auto& prng_seed : token_seeds) {
+      *output.add_prng_seed_linpir_ct_pads() = prng_seed;
+    }
   }
   output.set_prng_seed_linpir_gk_pad(prng_seed_linpir_gk_pad_);
-  // Add the LinPIR response pads (hints) to the public params.
-   for (const auto& pads : linpir_response_pads_) {
-  *output.add_linpir_response_hints() = pads;
-}
+  for (const auto& token_pads : linpir_response_pad_pool_) {
+    for (const auto& pads : token_pads) {
+      *output.add_linpir_response_hints() = pads;
+    }
+  }
+  output.set_database_version(database_version_);
+  output.set_pool_epoch(pool_epoch_);
+  output.set_pool_capacity(params_.session_pool_capacity);
   return output;
 }
 

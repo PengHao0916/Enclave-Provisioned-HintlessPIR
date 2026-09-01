@@ -135,16 +135,17 @@ Database<RlweInteger>::InnerProductWith(
 }
 
 template <typename RlweInteger>
-absl::Status Database<RlweInteger>::Preprocess(
-    absl::Span<const RnsPolynomial> pad_rotated_queries) {
+absl::StatusOr<std::vector<typename Database<RlweInteger>::RnsPolynomial>>
+Database<RlweInteger>::ComputePadInnerProducts(
+    absl::Span<const RnsPolynomial> pad_rotated_queries) const {
   if (pad_rotated_queries.size() != diagonals_[0].size()) {
     return absl::InvalidArgumentError(
         "`pad_rotated_queries` does not contain correct number of "
         "polynomials.");
   }
 
-  pad_inner_products_.clear();
-  pad_inner_products_.reserve(diagonals_.size());
+  std::vector<RnsPolynomial> pad_inner_products;
+  pad_inner_products.reserve(diagonals_.size());
   for (int i = 0; i < diagonals_.size(); ++i) {
     RLWE_ASSIGN_OR_RETURN(
         RnsPolynomial pad_inner_product,
@@ -153,8 +154,17 @@ absl::Status Database<RlweInteger>::Preprocess(
       RLWE_RETURN_IF_ERROR(pad_inner_product.FusedMulAddInPlace(
           pad_rotated_queries[j], diagonals_[i][j], moduli_));
     }
-    pad_inner_products_.push_back(std::move(pad_inner_product));
+    pad_inner_products.push_back(std::move(pad_inner_product));
   }
+  return pad_inner_products;
+}
+
+template <typename RlweInteger>
+absl::Status Database<RlweInteger>::Preprocess(
+    absl::Span<const RnsPolynomial> pad_rotated_queries) {
+  RLWE_ASSIGN_OR_RETURN(auto pad_inner_products,
+                        ComputePadInnerProducts(pad_rotated_queries));
+  pad_inner_products_ = std::move(pad_inner_products);
   return absl::OkStatus();
 }
 
@@ -163,7 +173,16 @@ absl::StatusOr<
     std::vector<rlwe::RnsBfvCiphertext<rlwe::MontgomeryInt<RlweInteger>>>>
 Database<RlweInteger>::InnerProductWithPreprocessedPads(
     absl::Span<const RnsCiphertext> ct_rotated_queries) const {
-  if (pad_inner_products_.size() != diagonals_.size()) {
+  return InnerProductWithPads(ct_rotated_queries, pad_inner_products_);
+}
+
+template <typename RlweInteger>
+absl::StatusOr<
+    std::vector<rlwe::RnsBfvCiphertext<rlwe::MontgomeryInt<RlweInteger>>>>
+Database<RlweInteger>::InnerProductWithPads(
+    absl::Span<const RnsCiphertext> ct_rotated_queries,
+    absl::Span<const RnsPolynomial> pad_inner_products) const {
+  if (pad_inner_products.size() != diagonals_.size()) {
     return absl::FailedPreconditionError("There is no preprocessed data.");
   }
   if (ct_rotated_queries.size() != diagonals_[0].size()) {
@@ -184,7 +203,7 @@ Database<RlweInteger>::InnerProductWithPreprocessedPads(
     }
     RLWE_RETURN_IF_ERROR(ct_inner_product.MergeLazyOperations());
     RLWE_RETURN_IF_ERROR(
-        ct_inner_product.SetPadComponent(pad_inner_products_[i]));
+        ct_inner_product.SetPadComponent(pad_inner_products[i]));
     ct_inner_products.push_back(std::move(ct_inner_product));
   }
 

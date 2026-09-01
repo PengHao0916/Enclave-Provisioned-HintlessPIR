@@ -71,9 +71,15 @@ struct BenchmarkEnv {
     public_params = server->GetPublicParams();
     client = Client::Create(params, public_params).value();
   }
+
+  void InitializeSession() {
+    auto init_request = client->GenerateSessionInitRequest().value();
+    auto init_response = server->InitializeSession(init_request).value();
+    client->AcceptSessionInitResponse(init_response).IgnoreError();
+  }
 };
 
-void BM_SessionInit_FirstQuery(benchmark::State& state) {
+void BM_SessionInitialization(benchmark::State& state) {
   int64_t num_rows = absl::GetFlag(FLAGS_num_rows);
   int64_t num_cols = absl::GetFlag(FLAGS_num_cols);
   
@@ -82,22 +88,47 @@ void BM_SessionInit_FirstQuery(benchmark::State& state) {
   params.db_cols = num_cols;
 
   BenchmarkEnv env(params);
-
-  auto request = env.client->GenerateRequest(1).value();
-  auto temp_response = env.server->HandleRequest(request).value();
-  state.counters["Up (KB)"] = request.ByteSizeLong() / 1024.0;
-  state.counters["Down (KB)"] = temp_response.ByteSizeLong() / 1024.0;
-  state.counters["Hint (KB)"] = env.public_params.ByteSizeLong() / 1024.0;
-
+  auto init_request = env.client->GenerateSessionInitRequest().value();
+  HintlessPirSessionInitResponse init_response;
   for (auto _ : state) {
-    auto response = env.server->HandleRequest(request);
-    benchmark::DoNotOptimize(response);
+    init_response = env.server->InitializeSession(init_request).value();
+    benchmark::DoNotOptimize(init_response);
   }
+  state.counters["Up (KB)"] = init_request.ByteSizeLong() / 1024.0;
+  state.counters["Down (KB)"] = init_response.ByteSizeLong() / 1024.0;
+  state.counters["Pool (KB)"] = env.public_params.ByteSizeLong() / 1024.0;
 }
 
-// 注册测试：指定名称和时间单位
-BENCHMARK(BM_SessionInit_FirstQuery)
-    ->Name("1. First Query (Send Key)")
+BENCHMARK(BM_SessionInitialization)
+    ->Name("1. Session Initialization (Install Key)")
+    ->Iterations(1)
+    ->Unit(benchmark::kMillisecond);
+
+void BM_FirstOnlineQuery(benchmark::State& state) {
+  int64_t num_rows = absl::GetFlag(FLAGS_num_rows);
+  int64_t num_cols = absl::GetFlag(FLAGS_num_cols);
+
+  Parameters params = kParameters;
+  params.db_rows = num_rows;
+  params.db_cols = num_cols;
+
+  BenchmarkEnv env(params);
+  env.InitializeSession();
+
+  auto request = env.client->GenerateRequest(1).value();
+  HintlessPirResponse response;
+  for (auto _ : state) {
+    response = env.server->HandleRequest(request).value();
+    benchmark::DoNotOptimize(response);
+  }
+  state.counters["Up (KB)"] = request.ByteSizeLong() / 1024.0;
+  state.counters["Down (KB)"] = response.ByteSizeLong() / 1024.0;
+  state.counters["Pool (KB)"] = env.public_params.ByteSizeLong() / 1024.0;
+}
+
+BENCHMARK(BM_FirstOnlineQuery)
+    ->Name("2. First Online Query (Cached Key)")
+    ->Iterations(1)
     ->Unit(benchmark::kMillisecond);
 
 void BM_SessionReuse_SubsequentQuery(benchmark::State& state) {
@@ -109,23 +140,25 @@ void BM_SessionReuse_SubsequentQuery(benchmark::State& state) {
   params.db_cols = num_cols;
 
   BenchmarkEnv env(params);
+  env.InitializeSession();
 
   auto request_1 = env.client->GenerateRequest(1).value();
-  env.server->HandleRequest(request_1).IgnoreError();
+  auto response_1 = env.server->HandleRequest(request_1).value();
+  env.client->RecoverRecord(response_1).IgnoreError();
   auto request_2 = env.client->GenerateRequest(2).value();
 
-  auto temp_response = env.server->HandleRequest(request_2).value();
-  state.counters["Up (KB)"] = request_2.ByteSizeLong() / 1024.0;
-  state.counters["Down (KB)"] = temp_response.ByteSizeLong() / 1024.0;
-  state.counters["Hint (KB)"] = env.public_params.ByteSizeLong() / 1024.0;
-
+  HintlessPirResponse response;
   for (auto _ : state) {
-    auto response = env.server->HandleRequest(request_2);
+    response = env.server->HandleRequest(request_2).value();
     benchmark::DoNotOptimize(response);
   }
+  state.counters["Up (KB)"] = request_2.ByteSizeLong() / 1024.0;
+  state.counters["Down (KB)"] = response.ByteSizeLong() / 1024.0;
+  state.counters["Pool (KB)"] = env.public_params.ByteSizeLong() / 1024.0;
 }
 BENCHMARK(BM_SessionReuse_SubsequentQuery)
-    ->Name("2. Subsequent (Cached Key)")
+    ->Name("3. Subsequent Online Query (Fresh Token)")
+    ->Iterations(1)
     ->Unit(benchmark::kMillisecond);
 
 }  // namespace
@@ -141,11 +174,11 @@ int main(int argc, char* argv[]) {
   int cols = absl::GetFlag(FLAGS_num_cols);
   std::cout << "\n";
   std::cout << "============================================================================\n";
-  std::cout << "                    HintlessPIR Performance Benchmark                     \n";
+  std::cout << "              Bounded-Session PIR Performance Benchmark                  \n";
   std::cout << "============================================================================\n";
   std::cout << "  Database Config : " << rows << " rows x " << cols << " cols\n";
   std::cout << "  Block Size      : 1024 rows/block\n";
-  std::cout << "  Optimization    : Upload and Download Cost Reduction (Session Resumption)\n";
+  std::cout << "  Protocol        : Cached Galois Key + One-Time Public-Component Pool\n";
   std::cout << "=====================================================================\n";
   benchmark::RunSpecifiedBenchmarks();
   std::cout << "=====================================================================\n";

@@ -30,13 +30,17 @@ message LinPirRequest {
   repeated rlwe.SerializedRnsPolynomial gk_key_bs = 2;
 
   optional string client_id = 3;
+
+  // One-based index selecting a unique preprocessed ciphertext pad.
+  optional uint64 query_token = 4;
 }
 
 // A LinPIR response sent from the server to the client.
 message LinPirResponse {
   message EncryptedInnerProduct {
-    //repeated rlwe.SerializedRnsRlweCiphertext ct_blocks = 1;原有定义
-      repeated rlwe.SerializedRnsPolynomial ct_b_blocks = 1; // 新的定义
+    // Only the private "b" component is transmitted online. The matching
+    // public component is selected from the one-time response pool.
+    repeated rlwe.SerializedRnsPolynomial ct_b_blocks = 1;
   }
 
   repeated EncryptedInnerProduct ct_inner_products = 1;

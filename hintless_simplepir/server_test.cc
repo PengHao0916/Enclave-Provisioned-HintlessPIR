@@ -107,8 +107,15 @@ TEST_F(ServerTest, Preprocess) {
   EXPECT_EQ(pub_params.prng_seed_linpir_gk_pad().size(),
             expected_prng_seed_length);
   int num_linpir_instances = kParameters.linpir_params.ts.size();
-  ASSERT_EQ(pub_params.prng_seed_linpir_ct_pads_size(), num_linpir_instances);
-  for (int i = 0; i < num_linpir_instances; ++i) {
+  int expected_pool_entries =
+      kParameters.session_pool_capacity * num_linpir_instances;
+  ASSERT_EQ(pub_params.prng_seed_linpir_ct_pads_size(),
+            expected_pool_entries);
+  ASSERT_EQ(pub_params.linpir_response_hints_size(), expected_pool_entries);
+  EXPECT_EQ(pub_params.pool_capacity(), kParameters.session_pool_capacity);
+  EXPECT_FALSE(pub_params.database_version().empty());
+  EXPECT_GT(pub_params.pool_epoch(), 0);
+  for (int i = 0; i < expected_pool_entries; ++i) {
     EXPECT_EQ(pub_params.prng_seed_linpir_ct_pads(i).size(),
               expected_prng_seed_length);
   }
@@ -148,7 +155,7 @@ TEST_F(ServerTest, HandleRequestFailsIfNotPreprocessed) {
                        HasSubstr("Server has not been preprocessed")));
 }
 
-TEST_F(ServerTest, HandleRequestFailsIfIncorrectLinPirRequest) {
+TEST_F(ServerTest, HandleRequestFailsIfSessionIsMissing) {
   ASSERT_OK(this->server_->Preprocess());
   HintlessPirRequest request;
   *request.mutable_ct_query_vector() =
@@ -157,7 +164,7 @@ TEST_F(ServerTest, HandleRequestFailsIfIncorrectLinPirRequest) {
   // No LinPIR request
   EXPECT_THAT(this->server_->HandleRequest(request),
               StatusIs(absl::StatusCode::kInvalidArgument,
-                       HasSubstr("unexpected number of LinPir requests")));
+                       HasSubstr("Missing session ID")));
 }
 
 }  // namespace

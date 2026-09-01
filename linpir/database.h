@@ -56,6 +56,11 @@ class Database {
   // computation when query is available.
   absl::Status Preprocess(absl::Span<const RnsPolynomial> pad_rotated_queries);
 
+  // Computes the public response pads for a specific one-time query pad
+  // without replacing the database's legacy cached preprocessing state.
+  absl::StatusOr<std::vector<RnsPolynomial>> ComputePadInnerProducts(
+      absl::Span<const RnsPolynomial> pad_rotated_queries) const;
+
   // Compute the matrix-vector product with the encrypted query vector.
   absl::StatusOr<std::vector<RnsCiphertext>> InnerProductWith(
       absl::Span<const RnsCiphertext> ct_rotated_queries) const;
@@ -65,6 +70,13 @@ class Database {
   // Returns error if `Preprocess` has not been called.
   absl::StatusOr<std::vector<RnsCiphertext>> InnerProductWithPreprocessedPads(
       absl::Span<const RnsCiphertext> ct_rotated_queries) const;
+
+  // Same computation using an explicitly selected set of public response pads.
+  // This supports a bounded pool of one-time query pads in a single database
+  // instance.
+  absl::StatusOr<std::vector<RnsCiphertext>> InnerProductWithPads(
+      absl::Span<const RnsCiphertext> ct_rotated_queries,
+      absl::Span<const RnsPolynomial> pad_inner_products) const;
 
   // Accessors
   int NumBlocks() const { return diagonals_.size(); }

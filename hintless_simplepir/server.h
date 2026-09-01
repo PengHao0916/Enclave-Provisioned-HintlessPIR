@@ -16,7 +16,10 @@
 #ifndef HINTLESS_PIR_HINTLESS_SIMPLEPIR_SERVER_H_
 #define HINTLESS_PIR_HINTLESS_SIMPLEPIR_SERVER_H_
 
+#include <cstdint>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -55,6 +58,10 @@ class Server {
   absl::StatusOr<HintlessPirResponse> HandleRequest(
       const HintlessPirRequest& request);
 
+  // Installs the session-scoped Galois key before any online query.
+  absl::StatusOr<HintlessPirSessionInitResponse> InitializeSession(
+      const HintlessPirSessionInitRequest& request);
+
   // Returns the server's public parameters that are sent to the client.
   HintlessPirServerPublicParams GetPublicParams() const;
 
@@ -81,7 +88,7 @@ class Server {
   absl::Status GeneratePublicParams();
 
   // Returns if the server has been preprocessed to accept requests.
-  bool IsPreprocessed() const { return lwe_query_pad_ != nullptr; }
+  bool IsPreprocessed() const { return preprocessed_; }
 
   // The parameters of the SimplePIR protocol.
   const Parameters params_;
@@ -94,13 +101,25 @@ class Server {
   std::string prng_seed_lwe_query_pad_;
   std::unique_ptr<const lwe::Matrix> lwe_query_pad_;
 
-  std::vector<std::string> prng_seed_linpir_ct_pads_;
+  // Token-major pool: [token][CRT instance].
+  std::vector<std::vector<std::string>> prng_seed_linpir_ct_pad_pool_;
   std::string prng_seed_linpir_gk_pad_;
+
+  std::string database_version_;
+  uint64_t pool_epoch_ = 0;
+  bool preprocessed_ = false;
+
+  struct SessionState {
+    uint64_t last_accepted_token = 0;
+  };
+  std::map<std::string, SessionState> sessions_;
+  mutable std::mutex sessions_mutex_;
 
   std::vector<std::vector<std::unique_ptr<LinPirDatabase>>> linpir_databases_;
   std::vector<std::unique_ptr<LinPirServer>> linpir_servers_;
   // Precomputed 'a' components of the LinPIR responses, serving as the hint.
-  std::vector<hintless_pir::LinPirResponse> linpir_response_pads_;
+  std::vector<std::vector<hintless_pir::LinPirResponse>>
+      linpir_response_pad_pool_;
 };
 
 }  // namespace hintless_simplepir

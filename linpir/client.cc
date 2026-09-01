@@ -79,7 +79,8 @@ Client<RlweInteger>::Create(const RlweParameters<RlweInteger>& parameters,
 template <typename RlweInteger>
 absl::StatusOr<rlwe::RnsBfvCiphertext<rlwe::MontgomeryInt<RlweInteger>>>
 Client<RlweInteger>::EncryptQuery(absl::Span<const RlweInteger> query_vector,
-                                  absl::string_view prng_seed_sk) {
+                                  absl::string_view prng_seed_sk,
+                                  absl::string_view prng_seed_ct_pad) {
   int num_slots_per_group = 1 << (params_.log_n - 1);
   if (query_vector.size() > num_slots_per_group) {
     return absl::InvalidArgumentError(
@@ -110,7 +111,7 @@ Client<RlweInteger>::EncryptQuery(absl::Span<const RlweInteger> query_vector,
     RLWE_ASSIGN_OR_RETURN(prng_enc,
                           rlwe::SingleThreadHkdfPrng::Create(prng_seed_enc));
     RLWE_ASSIGN_OR_RETURN(
-        prng_pad, rlwe::SingleThreadHkdfPrng::Create(prng_seed_ct_pad_));
+        prng_pad, rlwe::SingleThreadHkdfPrng::Create(prng_seed_ct_pad));
   } else {
     RLWE_ASSIGN_OR_RETURN(prng_sk,
                           rlwe::SingleThreadChaChaPrng::Create(prng_seed_sk));
@@ -119,7 +120,7 @@ Client<RlweInteger>::EncryptQuery(absl::Span<const RlweInteger> query_vector,
     RLWE_ASSIGN_OR_RETURN(prng_enc,
                           rlwe::SingleThreadChaChaPrng::Create(prng_seed_enc));
     RLWE_ASSIGN_OR_RETURN(
-        prng_pad, rlwe::SingleThreadChaChaPrng::Create(prng_seed_ct_pad_));
+        prng_pad, rlwe::SingleThreadChaChaPrng::Create(prng_seed_ct_pad));
   }
 
   // Sample RLWE secret key
@@ -138,6 +139,13 @@ Client<RlweInteger>::EncryptQuery(absl::Span<const RlweInteger> query_vector,
   secret_key_ = std::make_unique<RnsSecretKey>(std::move(secret_key));
 
   return ct_query;
+}
+
+template <typename RlweInteger>
+absl::StatusOr<rlwe::RnsBfvCiphertext<rlwe::MontgomeryInt<RlweInteger>>>
+Client<RlweInteger>::EncryptQuery(absl::Span<const RlweInteger> query_vector,
+                                  absl::string_view prng_seed_sk) {
+  return EncryptQuery(query_vector, prng_seed_sk, prng_seed_ct_pad_);
 }
 
 template <typename RlweInteger>

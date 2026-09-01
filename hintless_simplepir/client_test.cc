@@ -66,10 +66,17 @@ HintlessPirServerPublicParams GenerateDummyPublicParams(
     const Parameters& params) {
   HintlessPirServerPublicParams public_params;
   public_params.set_prng_seed_lwe_query_pad(std::string(kPrngSeed));
-  for (auto _ : params.linpir_params.ts) {
-    *public_params.add_prng_seed_linpir_ct_pads() = std::string(kPrngSeed);
+  for (int token = 0; token < params.session_pool_capacity; ++token) {
+    for (auto plaintext_modulus : params.linpir_params.ts) {
+      (void)plaintext_modulus;
+      *public_params.add_prng_seed_linpir_ct_pads() = std::string(kPrngSeed);
+      public_params.add_linpir_response_hints();
+    }
   }
   public_params.set_prng_seed_linpir_gk_pad(std::string(kPrngSeed));
+  public_params.set_database_version("test-database-version");
+  public_params.set_pool_epoch(1);
+  public_params.set_pool_capacity(params.session_pool_capacity);
   return public_params;
 }
 
@@ -88,8 +95,7 @@ TEST(Client, CreateFailsIfInvalidPublicParams) {
   EXPECT_THAT(
       Client::Create(kParameters, invalid_public_params),
       StatusIs(absl::StatusCode::kInvalidArgument,
-               testing::HasSubstr(
-                   "`public_params` contains incorrect number of PRNG seeds")));
+               testing::HasSubstr("invalid pool capacity")));
 }
 
 TEST(Client, Create) {
@@ -100,6 +106,14 @@ TEST(Client, Create) {
 TEST(Client, GenerateRequestFailsIfIndexIsOutOfRange) {
   auto public_params = GenerateDummyPublicParams(kParameters);
   ASSERT_OK_AND_ASSIGN(auto client, Client::Create(kParameters, public_params));
+  ASSERT_OK_AND_ASSIGN(auto init_request,
+                       client->GenerateSessionInitRequest());
+  HintlessPirSessionInitResponse init_response;
+  init_response.set_client_id(init_request.client_id());
+  init_response.set_database_version(init_request.database_version());
+  init_response.set_pool_epoch(init_request.pool_epoch());
+  init_response.set_pool_capacity(public_params.pool_capacity());
+  ASSERT_OK(client->AcceptSessionInitResponse(init_response));
 
   EXPECT_THAT(client->GenerateRequest(-1),
               StatusIs(absl::StatusCode::kInvalidArgument,
@@ -110,16 +124,74 @@ TEST(Client, GenerateRequestFailsIfIndexIsOutOfRange) {
                        testing::HasSubstr("`index` out of range")));
 }
 
+TEST(Client, SessionSetupAndOneTimeTokens) {
+  auto public_params = GenerateDummyPublicParams(kParameters);
+  ASSERT_OK_AND_ASSIGN(auto client, Client::Create(kParameters, public_params));
+
+  ASSERT_OK_AND_ASSIGN(auto init_request,
+                       client->GenerateSessionInitRequest());
+  EXPECT_FALSE(init_request.client_id().empty());
+  EXPECT_EQ(init_request.database_version(), public_params.database_version());
+  EXPECT_EQ(init_request.pool_epoch(), public_params.pool_epoch());
+  EXPECT_GT(init_request.linpir_gk_bs_size(), 0);
+  ASSERT_OK_AND_ASSIGN(auto repeated_init_request,
+                       client->GenerateSessionInitRequest());
+  EXPECT_EQ(repeated_init_request.SerializeAsString(),
+            init_request.SerializeAsString());
+
+  EXPECT_THAT(client->GenerateRequest(1),
+              StatusIs(absl::StatusCode::kFailedPrecondition,
+                       testing::HasSubstr("not acknowledged")));
+  HintlessPirSessionInitResponse init_response;
+  init_response.set_client_id(init_request.client_id());
+  init_response.set_database_version(init_request.database_version());
+  init_response.set_pool_epoch(init_request.pool_epoch());
+  init_response.set_pool_capacity(public_params.pool_capacity());
+  ASSERT_OK(client->AcceptSessionInitResponse(init_response));
+
+  ASSERT_OK_AND_ASSIGN(auto request1, client->GenerateRequest(1));
+  EXPECT_EQ(request1.query_token(), 1);
+  EXPECT_EQ(request1.linpir_gk_bs_size(), 0);
+  EXPECT_THAT(client->GenerateRequest(2),
+              StatusIs(absl::StatusCode::kFailedPrecondition,
+                       testing::HasSubstr("already outstanding")));
+
+  ASSERT_OK(client->AbandonOutstandingRequest());
+  ASSERT_OK_AND_ASSIGN(auto request2, client->GenerateRequest(2));
+  EXPECT_EQ(request2.query_token(), 2);
+  ASSERT_OK(client->AbandonOutstandingRequest());
+  EXPECT_THAT(client->GenerateRequest(3),
+              StatusIs(absl::StatusCode::kResourceExhausted,
+                       testing::HasSubstr("pool is exhausted")));
+}
+
 TEST(Client, RecoverRecordFailsIfInvalidResponse) {
   auto public_params = GenerateDummyPublicParams(kParameters);
   ASSERT_OK_AND_ASSIGN(auto client, Client::Create(kParameters, public_params));
 
+  ASSERT_OK_AND_ASSIGN(auto init_request,
+                       client->GenerateSessionInitRequest());
+  HintlessPirSessionInitResponse init_response;
+  init_response.set_client_id(init_request.client_id());
+  init_response.set_database_version(init_request.database_version());
+  init_response.set_pool_epoch(init_request.pool_epoch());
+  init_response.set_pool_capacity(public_params.pool_capacity());
+  ASSERT_OK(client->AcceptSessionInitResponse(init_response));
+  ASSERT_OK_AND_ASSIGN(auto request, client->GenerateRequest(1));
   HintlessPirResponse empty_response;
+  empty_response.set_client_id(request.client_id());
+  empty_response.set_database_version(request.database_version());
+  empty_response.set_pool_epoch(request.pool_epoch());
+  empty_response.set_query_token(request.query_token());
   EXPECT_THAT(client->RecoverRecord(empty_response),
               StatusIs(absl::StatusCode::kInvalidArgument,
                        testing::HasSubstr("`response` has incorrect size")));
 
   HintlessPirResponse no_linpir_response;
+  no_linpir_response.set_client_id(request.client_id());
+  no_linpir_response.set_database_version(request.database_version());
+  no_linpir_response.set_pool_epoch(request.pool_epoch());
+  no_linpir_response.set_query_token(request.query_token());
   *no_linpir_response.add_ct_records() =
       SerializeLweCiphertext(lwe::Vector::Zero(kParameters.db_rows));
   EXPECT_THAT(

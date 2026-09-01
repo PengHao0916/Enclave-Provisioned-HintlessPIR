@@ -18,6 +18,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -28,11 +29,11 @@
 #include "hintless_simplepir/parameters.h"
 #include "hintless_simplepir/serialization.pb.h"
 #include "linpir/client.h"
+#include "linpir/serialization.pb.h"
 #include "lwe/types.h"
 #include "shell_encryption/montgomery.h"
 #include "shell_encryption/rns/rns_context.h"
 #include "shell_encryption/rns/rns_modulus.h"
-#include "linpir/serialization.pb.h" // 添加这一行
 
 namespace hintless_pir {
 namespace hintless_simplepir {
@@ -48,6 +49,19 @@ class Client {
 
   // Returns the request for accessing database[index].
   absl::StatusOr<HintlessPirRequest> GenerateRequest(int64_t index);
+
+  // Returns the setup message that installs the session-scoped Galois key.
+  // Sending the same setup message does not consume a query token.
+  absl::StatusOr<HintlessPirSessionInitRequest> GenerateSessionInitRequest();
+
+  // Confirms that the server installed this client's session key. Online
+  // queries remain disabled until this acknowledgement is validated.
+  absl::Status AcceptSessionInitResponse(
+      const HintlessPirSessionInitResponse& response);
+
+  // Burns an outstanding token after a timeout or cancelled transport. The
+  // next request uses a fresh token and fresh query randomness.
+  absl::Status AbandonOutstandingRequest();
 
   // Returns the retrieved record from the server response.
   absl::StatusOr<std::string> RecoverRecord(
@@ -66,16 +80,15 @@ class Client {
   // 1) as in SimplePIR, a pair of indices (row_idx, col_idx) representing the
   // client's desired query index i = (row_idx * cols) + col_idx.
   //
-  // 2) a PRNG seed expanding to the LinPir secret key for encrypting the LWE
-  // secret used by the request.
+  // 2) the one-time token selecting the matching query and response pads.
   struct ClientState {
     int64_t row_idx;
     int64_t col_idx;
-    std::string prng_seed_linpir_sk;
+    uint64_t query_token;
   };
 
   explicit Client(
-      Parameters params, 
+      Parameters params,
       const HintlessPirServerPublicParams& public_params,
       std::vector<std::unique_ptr<const RlweRnsContext>> rlwe_contexts,
       std::vector<const RlwePrimeModulus*> rlwe_moduli,
@@ -87,11 +100,16 @@ class Client {
         rlwe_contexts_(std::move(rlwe_contexts)),
         rlwe_moduli_(std::move(rlwe_moduli)),
         linpir_clients_(std::move(linpir_clients)),
-        crt_context_(std::move(crt_context)) {
-          linpir_response_pads_.assign(
-         public_params.linpir_response_hints().begin(),
-         public_params.linpir_response_hints().end());
-        }
+        crt_context_(std::move(crt_context)),
+        linpir_ct_pad_seeds_(
+            public_params.prng_seed_linpir_ct_pads().begin(),
+            public_params.prng_seed_linpir_ct_pads().end()),
+        linpir_response_pads_(
+            public_params.linpir_response_hints().begin(),
+            public_params.linpir_response_hints().end()),
+        database_version_(public_params.database_version()),
+        pool_epoch_(public_params.pool_epoch()),
+        pool_capacity_(public_params.pool_capacity()) {}
 
   static std::vector<RlweInteger> EncodeLweVector(const lwe::Vector& lwe_vector,
                                                   RlweInteger lwe_modulus,
@@ -100,12 +118,13 @@ class Client {
   // Encrypts the LWE secret vector using LinPir clients and update `request`
   // with the LinPir requests.
   absl::Status GenerateLinPirRequestInPlace(
-      HintlessPirRequest& request, const lwe::Vector& lwe_secret) const;
+      HintlessPirRequest& request, const lwe::Vector& lwe_secret,
+      uint64_t query_token) const;
 
   // CRT interpolates the LinPir responses to recover the LWE decryption parts,
   // which are the inner products hint * LWE secrets.
   absl::StatusOr<std::vector<lwe::Vector>> RecoverLweDecryptionParts(
-      const HintlessPirResponse& response) const;
+      const HintlessPirResponse& response, uint64_t query_token) const;
 
   const Parameters params_;
 
@@ -121,14 +140,24 @@ class Client {
 
   const RlweRnsContext crt_context_;
 
-  // The 'a' components of the LinPIR responses, received from the server's
-// public parameters.
+  // Token-major ciphertext pad seeds and matching response components.
+  std::vector<std::string> linpir_ct_pad_seeds_;
   std::vector<hintless_pir::LinPirResponse> linpir_response_pads_;
+
+  std::string database_version_;
+  uint64_t pool_epoch_ = 0;
+  uint64_t pool_capacity_ = 0;
+  uint64_t next_query_token_ = 1;
+  bool has_outstanding_request_ = false;
+  bool session_init_generated_ = false;
+  bool session_ready_ = false;
+  HintlessPirSessionInitRequest cached_session_init_request_;
+  mutable std::mutex request_mutex_;
+
   // Per request state.
   ClientState state_;
 
   std::string client_id_;
-  mutable bool is_gk_sent_ = false;
   std::string session_linpir_sk_seed_;
 };
 
