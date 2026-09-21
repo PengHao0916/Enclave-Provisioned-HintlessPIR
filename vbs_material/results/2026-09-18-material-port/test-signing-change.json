@@ -1,0 +1,25 @@
+﻿{
+    "timestamp_utc":  "2026-09-18T04:09:06.3286879Z",
+    "requested_change":  "TESTSIGNING ON",
+    "reboot_performed":  false,
+    "secure_boot":  true,
+    "encryption":  [
+                       {
+                           "MountPoint":  "C:",
+                           "VolumeStatus":  0,
+                           "ProtectionStatus":  0,
+                           "EncryptionPercentage":  0
+                       },
+                       {
+                           "MountPoint":  "D:",
+                           "VolumeStatus":  0,
+                           "ProtectionStatus":  0,
+                           "EncryptionPercentage":  0
+                       }
+                   ],
+    "bcd_exit_code":  1,
+    "bcd_output":  "设置元素数据时出错。\n该值受安全引导策略保护，无法进行修改或删除。",
+    "change_applied":  false,
+    "reboot_required":  false,
+    "next_action":  "Disable Secure Boot in firmware, then rerun this script. Keep Memory Integrity enabled."
+}

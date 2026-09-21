@@ -1,57 +1,24 @@
-# Dual-Side Optimization for HintlessPIR
+# HintlessPIR：本地一次性材料原型
 
-This repository contains the implementation of the paper **"Dual-Side Optimization for HintlessPIR: Achieving Practical Bidirectional Communication Efficiency"**.
+当前实现分为客户端、普通 PIR 服务器、模拟 TEE 材料生成器。每个逻辑查询独立生成 LWE 秘密 s 与 RLWE 密钥 v，服务端提前保存 Enc(s) 和完整 Galois key；客户端在线上传 LWE 查询和材料编号，缓存一份静态公开响应分量。
 
-Built upon the [HintlessPIR](https://eprint.iacr.org/2023/1733) framework, this project addresses the critical bidirectional communication bottlenecks in single-server Private Information Retrieval (PIR). By introducing a dual-side optimization strategy, we achieve significant bandwidth reductions and throughput improvements while maintaining the "hintless" property (i.e., no database-dependent client storage).
+**本项目已在本机 Windows VBS enclave 中实际执行一次性材料核心和 HPKE 通道，并完成公开固定种子的端到端查询验证；可信客户端证明验证和完整多查询安全证明仍未完成，因此尚不能作为私密生产后端。** 不需要云服务器，使用 WSL/Linux 和 Windows 原生工具运行。
 
-## 🚀 Key Contributions
+Windows VBS enclave 状态见[原生代码、签名与实测状态](vbs_material/README.md)。完整材料计算核心（KDF、s/v、Enc(s)、Galois key）和 HPKE 入口已移植进非调试 enclave DLL。2026-09-21 本机已完成 `Create → Load → Initialize → Call`，隔离区内 68 项检查通过；functional/8 MiB 配置各 3 次真实 enclave 材料查询正确恢复。仍需可信客户端证明策略与正式后端集成。
 
-While the original HintlessPIR eliminates client-side storage, it fundamentally shifts the burden to the network, causing a "bandwidth explosion." Our work resolves this via two core optimizations:
-
-1.  **Downlink Optimization (Asymmetric Response Decomposition):**
-    * **Mechanism:** Structurally isolates static public components from the response ciphertext and offloads them to an offline phase.
-    * **Impact:** Mathematically guarantees a **50% reduction** in the online response payload.
-
-2.  **Uplink Optimization (Session-Based Key Caching):**
-    * **Mechanism:** Implements server-side caching for homomorphic evaluation keys, treating them as session-invariant.
-    * **Impact:** Reduces uplink query sizes by up to **74%** for subsequent requests.
-
-## 📊 Performance
-
-Our approach establishes a new practical equilibrium between throughput and communication efficiency.
-
-### Bandwidth Reduction (1 GB Database)
-| Metric | Baseline (HintlessPIR) | **Ours (Dual-Side Optimized)** | Improvement |
-| :--- | :--- | :--- | :--- |
-| **Response Size (Download)** | ~1.45 MB | **~0.76 MB** | 📉 **-50%** |
-| **Query Size (Upload)** | ~365 KB | **~95 KB** | 📉 **-74%** |
-
-### Throughput
-By eliminating redundant computations of static artifacts, our scheme achieves a **1.17× improvement** in server throughput compared to the baseline.
-
-## 🧩 Background: HintlessPIR
-
-Private Information Retrieval (PIR) allows a client to retrieve a record from a database without revealing which record was selected.
-
-* **Single-Server PIR:** Uses Homomorphic Encryption (HE) to process encrypted queries over the database.
-* **Hintless Setting:** The client stores no database-dependent state ("hint"), and the server stores no client-specific state. This simplifies database updates and client deployment.
-
-This library is based on the original [HintlessPIR implementation](https://github.com/google/hintless_pir) by Li et al., which utilizes LWE-based SimplePIR and outsources hint computation to the server via LinPIR.
-
-## 🛠️ Installation & Build
-
-This project uses [Bazel](https://bazel.build/) for building and testing.
-
-### Prerequisites
-* Bazel
-* C++17 compatible compiler
-
-### Building
-Clone the repository and run the tests to verify the installation:
+2026-09-21 更新：[加密材料通道](vbs_material/CHANNEL.md)已有 HPKE、生成回执和单会话重试门控；[安装确认与客户端日志](vbs_material/LIFECYCLE.md)将服务器签名验收、发出查询前的持久化和崩溃后失效接入测试链路。Windows VBS enclave 与原 Linux PIR 的 6 次完整查询通过。测试仍使用公开固定种子和仅检查报告绑定的适配器，不能据此宣称真实远程证明或私密生产后端完成。
 
 ```bash
-# Run all tests
-bazel test //...
+cd /home/ph/single-server-pir
+bash local_material/run_local_validation.sh
+```
 
-# Run benchmarks
-bazel run -c opt //hintless_simplepir:hintless_simplepir_benchmarks
+- [完整接口、运行方式、参数和局限](local_material/README.md)
+- [核心协议实现](local_material/protocol.cc)
+- [回归测试](local_material/protocol_test.cc)
+- [本地实验结果](local_material/results/)
+- [旧公共掩码池说明](hintless_simplepir/SECURE_SESSION.md)
+- [旧 README 归档](docs/legacy_readme.md)（其中性能和安全表述不是当前结果）
+
+底层代码基于 [Google HintlessPIR](https://github.com/google/hintless_pir) 与 shell-encryption。
+静态响应分量预计算归属于已有 HintlessPIR 构造；工程改动不构成新颖性或安全性证明。

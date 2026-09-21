@@ -1,0 +1,69 @@
+
+Dump of file D:\04_DATA\ACM TOPS\native_tee_build\hintless_vbs_probe.dll
+
+File Type: DLL
+
+  Section contains the following imports:
+
+    ucrtbase_enclave.dll
+             180004028 Import Address Table
+             180005C08 Import Name Table
+                     0 time date stamp
+                     0 Index of first forwarder reference
+
+                          67 _execute_onexit_table
+                          4B _cexit
+                         298 terminate
+                         1F2 free
+                         15C abort
+                         181 calloc
+                          90 _initialize_onexit_table
+                          E8 _seh_filter_dll
+                          92 _initterm_e
+                          91 _initterm
+
+    vertdll.dll
+             180004080 Import Address Table
+             180005C60 Import Name Table
+                     0 time date stamp
+                     0 Index of first forwarder reference
+
+                           E EnclaveGetAttestationReport
+                          13 EnclaveUsesAttestedKeys
+                           B EnclaveCopyIntoEnclave
+                           C EnclaveCopyOutOfEnclave
+                          46 InitializeSListHead
+                          8F RtlUnwindEx
+                          49 InterlockedFlushSList
+                          2F GetLastError
+                          92 SetLastError
+                          99 TlsAlloc
+                          9B TlsGetValue
+                          9D TlsSetValue
+                          9A TlsFree
+                          45 InitializeCriticalSectionEx
+                           7 DeleteCriticalSection
+                          14 EnclaveVerifyAttestationReport
+                          33 GetProcessHeap
+                          3D HeapFree
+                          39 HeapAlloc
+                           F EnclaveGetEnclaveInformation
+
+    bcrypt.dll
+             180004000 Import Address Table
+             180005BE0 Import Name Table
+                     0 time date stamp
+                     0 Index of first forwarder reference
+
+                           2 BCryptCloseAlgorithmProvider
+                          22 BCryptHash
+                          1D BCryptGenRandom
+                          27 BCryptOpenAlgorithmProvider
+
+  Summary
+
+        1000 .data
+        1000 .pdata
+        2000 .rdata
+        1000 .reloc
+        3000 .text

@@ -50,6 +50,15 @@ class Client {
   // Returns the request for accessing database[index].
   absl::StatusOr<HintlessPirRequest> GenerateRequest(int64_t index);
 
+  // Low-level adapter for an already installed, independent one-query key.
+  // The prepared-material coordinator validates the installation receipt.
+  // Requires exactly one static public pad per CRT limb, not a pad pool.
+  static absl::StatusOr<std::unique_ptr<Client>> CreateForPreparedMaterial(
+      const Parameters& params, const HintlessPirServerPublicParams& public_params,
+      absl::string_view material_id, absl::string_view rlwe_secret_seed);
+  absl::StatusOr<HintlessPirRequest> GeneratePreparedRequest(
+      int64_t index, absl::string_view lwe_secret_seed);
+
   // Returns the setup message that installs the session-scoped Galois key.
   // Sending the same setup message does not consume a query token.
   absl::StatusOr<HintlessPirSessionInitRequest> GenerateSessionInitRequest();
@@ -73,6 +82,10 @@ class Client {
   using RlweRnsContext = rlwe::RnsContext<RlweModularInt>;
   using RlwePrimeModulus = rlwe::PrimeModulus<RlweModularInt>;
   using LinPirClient = linpir::Client<RlweInteger>;
+
+  absl::StatusOr<HintlessPirRequest> GenerateRequestInternal(
+      int64_t index, absl::string_view lwe_secret_seed);
+  bool prepared_material_mode_ = false;
 
   // HintlessPir client state, which is cached for each request until the
   // corresponding response is received:

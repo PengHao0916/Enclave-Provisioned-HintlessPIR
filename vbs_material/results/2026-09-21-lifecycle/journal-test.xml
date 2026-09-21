@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="11" failures="0" disabled="0" errors="0" time="0.14" timestamp="2026-09-21T04:02:08.537" name="AllTests">
+  <testsuite name="JournalTest" tests="11" failures="0" disabled="0" skipped="0" errors="0" time="0.14" timestamp="2026-09-21T04:02:08.537">
+    <testcase name="DurableExactRetryAndTerminalState" file="vbs_material/client_journal_test.cc" line="41" status="run" result="completed" time="0.021" timestamp="2026-09-21T04:02:08.537" classname="JournalTest" />
+    <testcase name="QueryCannotPrecedeReadyAndReservation" file="vbs_material/client_journal_test.cc" line="53" status="run" result="completed" time="0.012" timestamp="2026-09-21T04:02:08.559" classname="JournalTest" />
+    <testcase name="ConcurrentReservationHasOneWinner" file="vbs_material/client_journal_test.cc" line="60" status="run" result="completed" time="0.01" timestamp="2026-09-21T04:02:08.572" classname="JournalTest" />
+    <testcase name="RestartInvalidatesEveryUnfinishedState" file="vbs_material/client_journal_test.cc" line="68" status="run" result="completed" time="0.038" timestamp="2026-09-21T04:02:08.582" classname="JournalTest" />
+    <testcase name="AbruptProcessExitPreservesReservation" file="vbs_material/client_journal_test.cc" line="84" status="run" result="completed" time="0.013" timestamp="2026-09-21T04:02:08.620" classname="JournalTest" />
+    <testcase name="TruncatedTailIsRejectedWithoutRepair" file="vbs_material/client_journal_test.cc" line="96" status="run" result="completed" time="0.005" timestamp="2026-09-21T04:02:08.634" classname="JournalTest" />
+    <testcase name="CorruptionIsRejectedWithoutReset" file="vbs_material/client_journal_test.cc" line="102" status="run" result="completed" time="0.005" timestamp="2026-09-21T04:02:08.640" classname="JournalTest" />
+    <testcase name="EmptyExistingJournalIsNotReinitialized" file="vbs_material/client_journal_test.cc" line="108" status="run" result="completed" time="0.005" timestamp="2026-09-21T04:02:08.645" classname="JournalTest" />
+    <testcase name="ExclusiveLockAndPrivateFileRequirements" file="vbs_material/client_journal_test.cc" line="116" status="run" result="completed" time="0.003" timestamp="2026-09-21T04:02:08.650" classname="JournalTest" />
+    <testcase name="QueryBindingAndSizeAreChecked" file="vbs_material/client_journal_test.cc" line="124" status="run" result="completed" time="0.014" timestamp="2026-09-21T04:02:08.653" classname="JournalTest" />
+    <testcase name="FailedWritePoisonsLiveJournal" file="vbs_material/client_journal_test.cc" line="132" status="run" result="completed" time="0.009" timestamp="2026-09-21T04:02:08.667" classname="JournalTest" />
+  </testsuite>
+</testsuites>

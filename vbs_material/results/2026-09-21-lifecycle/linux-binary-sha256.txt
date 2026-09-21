@@ -1,0 +1,2 @@
+c26a23819eb1c5724c65d87cb6c90f2cfa985945f1906e09c32b8ba381fa0093  bazel-bin/vbs_material/material_interop_test
+60ce74346c1e53e0d6f36d3585d051392f35c178c3ff5edf1038efe343144669  bazel-bin/vbs_material/client_journal_test

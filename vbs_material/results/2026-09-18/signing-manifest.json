@@ -1,0 +1,9 @@
+{
+  "timestamp_utc": "2026-09-18T03:59:23.4273992Z",
+  "certificate_thumbprint": "818124F7711F460687BA8EC16F8861B605D5FDA1",
+  "enclave_sha256": "6D01B6A84B04F3737E9DA0ACACD5112533512F7CD33A572DD78DA789CAB61CB0",
+  "page_hash_signing_requested": true,
+  "signtool_exit_code": 2,
+  "authenticode_status": "UnknownError",
+  "test_signing_boot_mode_changed": false
+}

@@ -1,0 +1,41 @@
+{
+  "backend": "windows-native-material-lifecycle-NOT-TEE",
+  "real_attestation_verified": false,
+  "authenticated_installation_and_journal": true,
+  "installation_negative_cases": 4,
+  "public_test_secrets_only": true,
+  "profile": "8mb",
+  "correct_queries": 3,
+  "cases": [
+    {
+      "case": 0,
+      "index": 0,
+      "record_correct": true,
+      "all_rlwe_noise_relations_checked": true,
+      "retry_checked": true,
+      "reuse_rejected": true,
+      "material_payload_bytes": 414932
+    },
+    {
+      "case": 1,
+      "index": 1048575,
+      "record_correct": true,
+      "all_rlwe_noise_relations_checked": true,
+      "retry_checked": true,
+      "reuse_rejected": true,
+      "material_payload_bytes": 414932
+    },
+    {
+      "case": 2,
+      "index": 524800,
+      "record_correct": true,
+      "all_rlwe_noise_relations_checked": true,
+      "retry_checked": true,
+      "reuse_rejected": true,
+      "material_payload_bytes": 414932
+    }
+  ],
+  "timestamp_utc": "2026-09-21T04:03:57.9521260Z",
+  "test_binary_sha256": "4D3A92638634FA4F0DCA8E6C7CE0F729D483EBAC8CA6689D308896F0FE314AED",
+  "enclave_binary_sha256": null
+}

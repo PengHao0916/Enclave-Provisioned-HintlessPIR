@@ -1,0 +1,12 @@
+{
+  "backend": "vbs-encrypted-material-public-test",
+  "public_test_secrets_only": true,
+  "real_attestation_verified": false,
+  "success": false,
+  "stage": "LoadEnclaveImageW",
+  "hresult": "0x80070241",
+  "process_exit_code": 5,
+  "timestamp_utc": "2026-09-20T08:37:31.9554026Z",
+  "tested_enclave_sha256": "B585E38908FF756FD1BB2EDAF06B8E64D38794A3ED265784045FF983D421DBB5",
+  "tested_host_sha256": "7B1602C2E22162818068C10877533E3EFB4E61A07789F835B10F7B43DF763DF5"
+}

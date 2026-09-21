@@ -1,0 +1,14 @@
+{
+  "timestamp_utc": "2026-09-21T04:21:48.6010806Z",
+  "phase": "armed",
+  "message": "One-time continuation registered for your next Windows login. No restart or boot change was performed.",
+  "environment": {
+    "secure_boot": true,
+    "test_signing_active": false,
+    "hvci_running": true,
+    "errors": [],
+    "code_integrity_options": 62465
+  },
+  "private_backend_complete": false,
+  "automatic_reboot": false
+}

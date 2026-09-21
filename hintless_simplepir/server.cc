@@ -375,6 +375,12 @@ absl::StatusOr<HintlessPirResponse> Server::HandleRequest(
   return response;
 }
 
+void Server::RemoveSession(absl::string_view session_id) {
+  std::lock_guard<std::mutex> lock(sessions_mutex_);
+  sessions_.erase(std::string(session_id));
+  for (const auto& server : linpir_servers_) server->RemoveSession(session_id);
+}
+
 HintlessPirServerPublicParams Server::GetPublicParams() const {
   HintlessPirServerPublicParams output;
   output.set_prng_seed_lwe_query_pad(prng_seed_lwe_query_pad_);

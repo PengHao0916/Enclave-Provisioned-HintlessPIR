@@ -88,6 +88,10 @@ class Client {
   // Returns a Galois key based on the cached `secret_key_`.
   absl::StatusOr<RnsGaloisKey> GenerateGaloisKey() const;
 
+  // Restores only the decryption key. No encryption or evaluation-key
+  // generation is performed on the prepared-material client's online path.
+  absl::Status RestoreSecretKey(absl::string_view prng_seed_sk);
+
   // Returns a LinPIR request including the given ciphertext and Galois key.
   absl::StatusOr<LinPirRequest> GenerateRequest(const RnsCiphertext& ct_query,
                                                 const RnsGaloisKey& gk) const {

@@ -1,0 +1,14 @@
+{
+  "timestamp_utc": "2026-09-21T11:42:18.9112437Z",
+  "phase": "enclave-public-tests-passed",
+  "message": "Real enclave execution and six public-fixture queries passed. Private client attestation remains incomplete.",
+  "environment": {
+    "secure_boot": false,
+    "test_signing_active": true,
+    "hvci_running": true,
+    "errors": [],
+    "code_integrity_options": 2635267
+  },
+  "private_backend_complete": false,
+  "automatic_reboot": false
+}

@@ -1,0 +1,9 @@
+build/
+*.obj
+*.dll
+*.exe
+*.pdb
+*.lib
+*.exp
+*.cer
+*.pfx

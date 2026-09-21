@@ -1,0 +1,33 @@
+﻿{
+    "timestamp_utc":  "2026-09-18T04:07:36.2993406Z",
+    "changes_made":  [
+
+                     ],
+    "administrator":  true,
+    "secure_boot":  true,
+    "tpm":  {
+                "present":  true,
+                "ready":  true,
+                "enabled":  true,
+                "activated":  true
+            },
+    "encryption":  [
+                       {
+                           "MountPoint":  "C:",
+                           "VolumeStatus":  0,
+                           "ProtectionStatus":  0,
+                           "EncryptionPercentage":  0,
+                           "LockStatus":  0
+                       },
+                       {
+                           "MountPoint":  "D:",
+                           "VolumeStatus":  0,
+                           "ProtectionStatus":  0,
+                           "EncryptionPercentage":  0,
+                           "LockStatus":  0
+                       }
+                   ],
+    "bcd_read_exit_code":  0,
+    "bcd_read_output":  "\nWindows 启动管理器\n--------------------\n标识符                  {bootmgr}\ndevice                  partition=\\Device\\HarddiskVolume1\npath                    \\EFI\\Microsoft\\Boot\\bootmgfw.efi\ndescription             Windows Boot Manager\nlocale                  zh-CN\ninherit                 {globalsettings}\ndefault                 {current}\nresumeobject            {73058757-53b3-11f0-abbe-b0d52126b55f}\ndisplayorder            {current}\ntoolsdisplayorder       {memdiag}\ntimeout                 30\n\nWindows 启动加载器\n-------------------\n标识符                  {current}\ndevice                  partition=C:\npath                    \\Windows\\system32\\winload.efi\ndescription             Windows 11\nlocale                  zh-CN\ninherit                 {bootloadersettings}\nrecoverysequence        {8428ac10-532d-11f0-bfd9-30e3a477f8fc}\ndisplaymessageoverride  Recovery\nrecoveryenabled         Yes\nisolatedcontext         Yes\nallowedinmemorysettings 0x15000075\nosdevice                partition=C:\nsystemroot              \\Windows\nresumeobject            {73058757-53b3-11f0-abbe-b0d52126b55f}\nnx                      OptIn\nbootmenupolicy          Standard\nhypervisorlaunchtype    Auto",
+    "preflight_complete":  true
+}

@@ -1,0 +1,34 @@
+exec ${PAGER:-/usr/bin/less} "$0" || exit 1
+Executing tests from //vbs_material:client_journal_test
+-----------------------------------------------------------------------------
+Running main() from gmock_main.cc
+[==========] Running 11 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 11 tests from JournalTest
+[ RUN      ] JournalTest.DurableExactRetryAndTerminalState
+[       OK ] JournalTest.DurableExactRetryAndTerminalState (21 ms)
+[ RUN      ] JournalTest.QueryCannotPrecedeReadyAndReservation
+[       OK ] JournalTest.QueryCannotPrecedeReadyAndReservation (12 ms)
+[ RUN      ] JournalTest.ConcurrentReservationHasOneWinner
+[       OK ] JournalTest.ConcurrentReservationHasOneWinner (10 ms)
+[ RUN      ] JournalTest.RestartInvalidatesEveryUnfinishedState
+[       OK ] JournalTest.RestartInvalidatesEveryUnfinishedState (38 ms)
+[ RUN      ] JournalTest.AbruptProcessExitPreservesReservation
+[       OK ] JournalTest.AbruptProcessExitPreservesReservation (13 ms)
+[ RUN      ] JournalTest.TruncatedTailIsRejectedWithoutRepair
+[       OK ] JournalTest.TruncatedTailIsRejectedWithoutRepair (5 ms)
+[ RUN      ] JournalTest.CorruptionIsRejectedWithoutReset
+[       OK ] JournalTest.CorruptionIsRejectedWithoutReset (5 ms)
+[ RUN      ] JournalTest.EmptyExistingJournalIsNotReinitialized
+[       OK ] JournalTest.EmptyExistingJournalIsNotReinitialized (5 ms)
+[ RUN      ] JournalTest.ExclusiveLockAndPrivateFileRequirements
+[       OK ] JournalTest.ExclusiveLockAndPrivateFileRequirements (3 ms)
+[ RUN      ] JournalTest.QueryBindingAndSizeAreChecked
+[       OK ] JournalTest.QueryBindingAndSizeAreChecked (14 ms)
+[ RUN      ] JournalTest.FailedWritePoisonsLiveJournal
+[       OK ] JournalTest.FailedWritePoisonsLiveJournal (9 ms)
+[----------] 11 tests from JournalTest (140 ms total)
+
+[----------] Global test environment tear-down
+[==========] 11 tests from 1 test suite ran. (140 ms total)
+[  PASSED  ] 11 tests.

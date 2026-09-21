@@ -1,0 +1,12 @@
+[
+  {
+    "TimeCreated": "2026-09-21T12:02:11.105767+08:00",
+    "Id": 3004,
+    "Message": "Windows is unable to verify the image integrity of the file \\Device\\HarddiskVolume4\\04_DATA\\ACM TOPS\\native_tee_build\\hintless_vbs_probe.dll because file hash could not be found on the system. A recent hardware or software change might have installed a file that is signed incorrectly or damaged, or that might be malicious software from an unknown source."
+  },
+  {
+    "TimeCreated": "2026-09-21T11:59:51.5538373+08:00",
+    "Id": 3004,
+    "Message": "Windows is unable to verify the image integrity of the file \\Device\\HarddiskVolume4\\04_DATA\\ACM TOPS\\native_tee_build\\hintless_vbs_probe.dll because file hash could not be found on the system. A recent hardware or software change might have installed a file that is signed incorrectly or damaged, or that might be malicious software from an unknown source."
+  }
+]

@@ -118,6 +118,9 @@ absl::StatusOr<std::unique_ptr<Client>> Client::Create(
 absl::StatusOr<HintlessPirSessionInitRequest>
 Client::GenerateSessionInitRequest() {
   std::lock_guard<std::mutex> lock(request_mutex_);
+  if (prepared_material_mode_) {
+    return absl::FailedPreconditionError("Prepared materials have no client key upload.");
+  }
   if (session_init_generated_) {
     return cached_session_init_request_;
   }
@@ -170,6 +173,36 @@ absl::Status Client::AbandonOutstandingRequest() {
 }
 
 absl::StatusOr<HintlessPirRequest> Client::GenerateRequest(int64_t index) {
+  if (prepared_material_mode_) {
+    return absl::FailedPreconditionError("Use GeneratePreparedRequest for this client.");
+  }
+  return GenerateRequestInternal(index, {});
+}
+
+absl::StatusOr<std::unique_ptr<Client>> Client::CreateForPreparedMaterial(
+    const Parameters& params, const HintlessPirServerPublicParams& public_params,
+    absl::string_view material_id, absl::string_view rlwe_secret_seed) {
+  if (params.session_pool_capacity != 1 || material_id.empty()) {
+    return absl::InvalidArgumentError("Prepared mode requires one static pad and an ID.");
+  }
+  RLWE_ASSIGN_OR_RETURN(auto client, Create(params, public_params));
+  client->client_id_ = std::string(material_id);
+  client->session_linpir_sk_seed_ = std::string(rlwe_secret_seed);
+  client->prepared_material_mode_ = true;
+  client->session_ready_ = true;
+  return client;
+}
+
+absl::StatusOr<HintlessPirRequest> Client::GeneratePreparedRequest(
+    int64_t index, absl::string_view lwe_secret_seed) {
+  if (!prepared_material_mode_ || lwe_secret_seed.empty()) {
+    return absl::FailedPreconditionError("A prepared key and LWE seed are required.");
+  }
+  return GenerateRequestInternal(index, lwe_secret_seed);
+}
+
+absl::StatusOr<HintlessPirRequest> Client::GenerateRequestInternal(
+    int64_t index, absl::string_view lwe_secret_seed) {
   std::lock_guard<std::mutex> lock(request_mutex_);
   if (!session_ready_) {
     return absl::FailedPreconditionError(
@@ -214,9 +247,19 @@ absl::StatusOr<HintlessPirRequest> Client::GenerateRequest(int64_t index) {
     RLWE_ASSIGN_OR_RETURN(lwe_enc_prng,
                           rlwe::SingleThreadChaChaPrng::Create(prng_seed_enc));
   }
-  RLWE_ASSIGN_OR_RETURN(
-      lwe::SymmetricLweKey lwe_secret_key,
-      lwe::SymmetricLweKey::Sample(params_.lwe_secret_dim, lwe_enc_prng.get()));
+  std::unique_ptr<rlwe::SecurePrng> secret_prng;
+  if (prepared_material_mode_) {
+    if (params_.prng_type == rlwe::PRNG_TYPE_HKDF) {
+      RLWE_ASSIGN_OR_RETURN(secret_prng,
+          rlwe::SingleThreadHkdfPrng::Create(lwe_secret_seed));
+    } else {
+      RLWE_ASSIGN_OR_RETURN(secret_prng,
+          rlwe::SingleThreadChaChaPrng::Create(lwe_secret_seed));
+    }
+  }
+  RLWE_ASSIGN_OR_RETURN(lwe::SymmetricLweKey lwe_secret_key,
+      lwe::SymmetricLweKey::Sample(params_.lwe_secret_dim,
+          prepared_material_mode_ ? secret_prng.get() : lwe_enc_prng.get()));
 
   // Choosing the largest scaling factor that supports our plaintext space
   int log_scaling_factor =
@@ -243,9 +286,16 @@ absl::StatusOr<HintlessPirRequest> Client::GenerateRequest(int64_t index) {
   request.set_pool_epoch(pool_epoch_);
   request.set_query_token(query_token);
 
-  // Step 2. Encrypting the LWE secret using LinPir.
-  RLWE_RETURN_IF_ERROR(
-      GenerateLinPirRequestInPlace(request, lwe_secret_key.Key(), query_token));
+  if (prepared_material_mode_) {
+    // Encryption and full Galois-key generation already occurred at the
+    // material generator. The client only restores decryption keys here.
+    for (const auto& linpir_client : linpir_clients_) {
+      RLWE_RETURN_IF_ERROR(linpir_client->RestoreSecretKey(session_linpir_sk_seed_));
+    }
+  } else {
+    RLWE_RETURN_IF_ERROR(
+        GenerateLinPirRequestInPlace(request, lwe_secret_key.Key(), query_token));
+  }
   has_outstanding_request_ = true;
   return request;
 }

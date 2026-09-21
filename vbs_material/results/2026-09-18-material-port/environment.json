@@ -1,0 +1,15 @@
+{
+  "timestamp_utc": "2026-09-18T04:00:15.8042469Z",
+  "cpu": "Intel(R) Core(TM) i7-14650HX",
+  "windows_build": "26200",
+  "windows_revision": 9457,
+  "windows_edition": "CoreCountrySpecific",
+  "vbs_status": 2,
+  "security_services_running": [
+    2
+  ],
+  "secure_boot_registry_enabled": 1,
+  "boot_policy_changed": false,
+  "root_trust_store_changed": false,
+  "cloud_services_used": false
+}

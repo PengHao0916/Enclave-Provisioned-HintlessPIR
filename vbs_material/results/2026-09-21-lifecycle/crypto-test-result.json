@@ -1,0 +1,9 @@
+{
+  "backend": "windows-native-compatibility-test-NOT-TEE",
+  "public_test_inputs_only": true,
+  "checks_passed": 59,
+  "hresult": "0x00000000",
+  "success": true,
+  "timestamp_utc": "2026-09-21T03:55:33.2300274Z",
+  "test_binary_sha256": "D48AF70812B0D0136052709B590241E90923629B4EE8B97D71004553FE522661"
+}

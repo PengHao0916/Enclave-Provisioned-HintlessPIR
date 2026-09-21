@@ -1,0 +1,12 @@
+{
+  "timestamp_utc": "2026-09-20T08:43:24.0574206Z",
+  "last_boot": "2026-09-19T11:57:56.5+08:00",
+  "windows_version": "10.0.26200",
+  "windows_ubr": 9457,
+  "secure_boot_registry": 1,
+  "vbs_status": 2,
+  "running_security_services": [
+    2
+  ],
+  "changes_made_this_turn": []
+}

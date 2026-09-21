@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "timestamp_utc": "2026-09-18T03:58:59.9486550Z",
+  "stage": "compiled-native-vbs-probe-not-pir-backend",
+  "msvc": "14.44.35207",
+  "windows_sdk_folder": "10.0.26100.0",
+  "veiid_file_version": "10.0.26100.4654 (WinBuild.160101.0800)",
+  "debug_enclave": false,
+  "imported_platform_dlls": [
+    "bcrypt.dll",
+    "ucrtbase_enclave.dll",
+    "vertdll.dll"
+  ],
+  "signing_applied_by_build": false,
+  "unsigned_enclave_sha256": "1ED366037C5E5C9568C85DF0E9F697D04CD63188F2FF9597C3B704209991F39F",
+  "host_sha256": "054AE872A93581AEFB01E37400A0C01D51EF9442C298FC09F7CE8A5837AD00F6",
+  "source_sha256": {
+    "build.ps1": "1B14704DC976D37DD3FAC0FCFE7BDF9E109345F453133ECDFDD345B7A4188691",
+    "enclave_probe.def": "4384BF07A09FA3502370478F94C83FC50B102625DF5FC293309D45B681B33C93",
+    "probe_host.cc": "3F202BDF851498BCCD074C34C65106BD53CE4F3E561758E87ED5CB5A23E3F48B",
+    "enclave_probe.cc": "22175726F78196F66BBD18D6DD5B5507F4B9DA367A875CC2414A58B5AFDB8C18",
+    "probe_abi.h": "98347F329900756D51E29C41000FA91470D288785B6846E751030D9FFEBAAFAB"
+  }
+}

@@ -1,0 +1,2 @@
+# Keep Abseil's string_view ABI consistent across all libraries and tests.
+build --cxxopt=-std=c++17

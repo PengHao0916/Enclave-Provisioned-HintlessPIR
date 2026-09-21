@@ -1,0 +1,43 @@
+{
+  "recorded_utc": "2026-09-21T12:41:54.564113+00:00",
+  "kernel": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.35",
+  "base_commit": "73e3122a3e967d9b2ba2cafc751485a7197bd668",
+  "branch": "refactor/local-material-simulation",
+  "source_sha256_at_recording": "be43ca0621c2b82ab51be0239d49d127fd159a70a88fad8f14daf0fa166f6d52",
+  "build": "Bazel -c opt, C++17, local WSL/Linux",
+  "scope": "Correctness and application payload accounting only; no hardware TEE, secure erasure, concrete security estimate, network throughput or stable latency claim.",
+  "profiles": {
+    "functional": {
+      "correct_queries": 5,
+      "mean_local_online_ms": 17.79118,
+      "mean_server_with_local_ipc_ms": 5.478294,
+      "mean_server_compute_ms": 4.9691339999999995,
+      "end_to_end_queries_per_second": 56.207626475590715,
+      "server_queries_per_second": 182.53857861589756,
+      "server_compute_queries_per_second": 201.24230902205497,
+      "end_to_end_database_throughput_mib_s": 0.02744513011503453,
+      "server_database_throughput_mib_s": 0.08913016533979373,
+      "server_compute_database_throughput_mib_s": 0.09826284620217528,
+      "mean_preparation_ms": 13.22472,
+      "online_query_bytes_per_query": 145.6,
+      "client_total_payload_bytes": 4431662,
+      "static_half_matches_online_rlwe_half": true
+    },
+    "8mb": {
+      "correct_queries": 10,
+      "mean_local_online_ms": 315.4957,
+      "mean_server_with_local_ipc_ms": 270.8717,
+      "mean_server_compute_ms": 270.2275,
+      "end_to_end_queries_per_second": 3.1696153069598094,
+      "server_queries_per_second": 3.691784708406231,
+      "server_compute_queries_per_second": 3.7005856176739966,
+      "end_to_end_database_throughput_mib_s": 25.356922455678475,
+      "server_database_throughput_mib_s": 29.53427766724985,
+      "server_compute_database_throughput_mib_s": 29.604684941391973,
+      "mean_preparation_ms": 12.93208,
+      "online_query_bytes_per_query": 5163.1,
+      "client_total_payload_bytes": 8577022,
+      "static_half_matches_online_rlwe_half": true
+    }
+  }
+}

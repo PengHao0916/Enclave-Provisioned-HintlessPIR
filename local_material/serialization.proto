@@ -1,0 +1,69 @@
+syntax = "proto2";
+package hintless_pir.local_material;
+
+import "hintless_simplepir/serialization.proto";
+import "shell_encryption/rns/serialization.proto";
+
+// These messages describe a LOCAL SIMULATION, not hardware attestation.
+// Secret-bearing messages must never be sent to the ordinary PIR server.
+message Preparation {
+  optional bytes config_id = 1;
+  optional bytes material_id = 2;
+  optional bytes secret_seed = 3;
+}
+
+// Public output of the generator. No seed, secret key, or query index.
+message Material {
+  optional bytes config_id = 1;
+  optional bytes material_id = 2;
+  repeated rlwe.SerializedRnsPolynomial ciphertexts = 3;
+  repeated rlwe.SerializedRnsPolynomial galois_key = 4;
+}
+
+message Receipt {
+  optional bytes config_id = 1;
+  optional bytes material_id = 2;
+  optional bytes material_digest = 3;
+  optional string backend = 4;
+}
+
+message Query {
+  optional bytes config_id = 1;
+  optional bytes material_id = 2;
+  optional bytes request_id = 3;
+  optional hintless_pir.SerializedLweCiphertext lwe_query = 4;
+}
+
+message Response {
+  optional bytes config_id = 1;
+  optional bytes material_id = 2;
+  optional bytes request_id = 3;
+  optional hintless_pir.HintlessPirResponse pir_response = 4;
+}
+
+// Generator-only configuration intentionally excludes A, H, D and the
+// database-dependent response pads. Numeric parameters come from the profile.
+message GeneratorConfig {
+  optional bytes config_id = 1;
+  repeated bytes ciphertext_pad_seeds = 2;
+  optional bytes galois_pad_seed = 3;
+}
+
+// Framed local worker protocol. Only the test coordinator sees all roles.
+// Never treat its pipes, process separation, or receipts as a real TEE.
+message WorkerMessage {
+  optional string command = 1;
+  optional hintless_pir.HintlessPirServerPublicParams public_params = 2;
+  optional GeneratorConfig generator_config = 3;
+  optional Preparation preparation = 4;
+  optional Material material = 5;
+  optional Receipt receipt = 6;
+  optional Query query = 7;
+  optional Response response = 8;
+  optional int64 index = 9;
+  optional bytes record = 10;
+  optional string error = 11;
+  optional bytes material_id = 12;
+  // Test-only timing measured inside the selected worker process.
+  optional double elapsed_ms = 13;
+}

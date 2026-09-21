@@ -62,6 +62,10 @@ class Server {
   absl::StatusOr<HintlessPirSessionInitResponse> InitializeSession(
       const HintlessPirSessionInitRequest& request);
 
+  // Release the heavyweight evaluation key after a prepared material is used.
+  // The material coordinator retains replay tombstones separately.
+  void RemoveSession(absl::string_view session_id);
+
   // Returns the server's public parameters that are sent to the client.
   HintlessPirServerPublicParams GetPublicParams() const;
 

@@ -1,0 +1,7 @@
+LIBRARY hintless_vbs_probe
+EXPORTS
+    HintlessChannelBegin
+    HintlessChannelGenerate
+    HintlessChannelClose
+    HintlessVbsProbe
+    HintlessPublicMaterialTest

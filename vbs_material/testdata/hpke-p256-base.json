@@ -1,0 +1,40 @@
+{
+  "source": "https://raw.githubusercontent.com/cfrg/draft-irtf-cfrg-hpke/master/test-vectors.json",
+  "source_file_sha256": "61FC662F01996CD06D713DACF5E133167BD309A1F329442D53F1E21A47B3EDE6",
+  "mode": 0,
+  "kem_id": 16,
+  "kdf_id": 1,
+  "aead_id": 1,
+  "info": "4f6465206f6e2061204772656369616e2055726e",
+  "skEm": "4995788ef4b9d6132b249ce59a77281493eb39af373d236a1fe415cb0c2d7beb",
+  "pkEm": "04a92719c6195d5085104f469a8b9814d5838ff72b60501e2c4466e5e67b325ac98536d7b61a1af4b78e5b7f951c0900be863c403ce65c9bfcb9382657222d18c4",
+  "skRm": "f3ce7fdae57e1a310d87f1ebbde6f328be0a99cdbcadf4d6589cf29de4b8ffd2",
+  "pkRm": "04fe8c19ce0905191ebc298a9245792531f26f0cece2460639e8bc39cb7f706a826a779b4cf969b8a0e539c7f62fb3d30ad6aa8f80e30f1d128aafd68a2ce72ea0",
+  "shared_secret": "c0d26aeab536609a572b07695d933b589dcf363ff9d93c93adea537aeabb8cb8",
+  "key": "868c066ef58aae6dc589b6cfdd18f97e",
+  "base_nonce": "4e0bc5018beba4bf004cca59",
+  "exporter_secret": "14ad94af484a7ad3ef40e9f3be99ecc6fa9036df9d4920548424df127ee0d99f",
+  "encryption": {
+    "aad": "436f756e742d30",
+    "ct": "5ad590bb8baa577f8619db35a36311226a896e7342a6d836d8b7bcd2f20b6c7f9076ac232e3ab2523f39513434",
+    "nonce": "4e0bc5018beba4bf004cca59",
+    "pt": "4265617574792069732074727574682c20747275746820626561757479"
+  },
+  "exports": [
+    {
+      "exporter_context": "",
+      "L": 32,
+      "exported_value": "5e9bc3d236e1911d95e65b576a8a86d478fb827e8bdfe77b741b289890490d4d"
+    },
+    {
+      "exporter_context": "00",
+      "L": 32,
+      "exported_value": "6cff87658931bda83dc857e6353efe4987a201b849658d9b047aab4cf216e796"
+    },
+    {
+      "exporter_context": "54657374436f6e74657874",
+      "L": 32,
+      "exported_value": "d8f1ea7942adbba7412c6d431c62d01371ea476b823eb697e1f6e6cae1dab85a"
+    }
+  ]
+}

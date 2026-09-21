@@ -1,0 +1,24 @@
+﻿{
+    "timestamp_utc":  "2026-09-21T11:34:44.8175116Z",
+    "requested_change":  "TESTSIGNING ON",
+    "reboot_performed":  false,
+    "secure_boot":  false,
+    "encryption":  [
+                       {
+                           "MountPoint":  "C:",
+                           "VolumeStatus":  0,
+                           "ProtectionStatus":  0,
+                           "EncryptionPercentage":  0
+                       },
+                       {
+                           "MountPoint":  "D:",
+                           "VolumeStatus":  0,
+                           "ProtectionStatus":  0,
+                           "EncryptionPercentage":  0
+                       }
+                   ],
+    "bcd_exit_code":  0,
+    "bcd_output":  "操作成功完成。",
+    "change_applied":  true,
+    "reboot_required":  true
+}

@@ -216,6 +216,21 @@ Client<RlweInteger>::GenerateGaloisKey() const {
 }
 
 template <typename RlweInteger>
+absl::Status Client<RlweInteger>::RestoreSecretKey(
+    absl::string_view prng_seed_sk) {
+  std::unique_ptr<rlwe::SecurePrng> prng;
+  if (params_.prng_type == rlwe::PRNG_TYPE_HKDF) {
+    RLWE_ASSIGN_OR_RETURN(prng, rlwe::SingleThreadHkdfPrng::Create(prng_seed_sk));
+  } else {
+    RLWE_ASSIGN_OR_RETURN(prng, rlwe::SingleThreadChaChaPrng::Create(prng_seed_sk));
+  }
+  RLWE_ASSIGN_OR_RETURN(auto key, RnsSecretKey::Sample(
+      params_.log_n, params_.error_variance, rns_moduli_, prng.get()));
+  secret_key_ = std::make_unique<RnsSecretKey>(std::move(key));
+  return absl::OkStatus();
+}
+
+template <typename RlweInteger>
 absl::StatusOr<std::vector<std::vector<RlweInteger>>>
 Client<RlweInteger>::Recover(const LinPirResponse& response,
                              const LinPirResponse& response_pads) {
