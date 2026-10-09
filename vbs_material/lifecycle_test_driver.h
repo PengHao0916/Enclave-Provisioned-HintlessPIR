@@ -9,4 +9,12 @@ namespace hintless_pir::vbs {
 absl::Status RunPublicLifecycle(const std::string& program, const std::string& dll,
     const std::string& log, const hintless_vbs::PublicMaterialTestRequest& request,
     AuthenticatedInstaller& installer, hintless_vbs::RawMaterial& raw, int corruption = 0);
+
+// Research-only local client transport with a fresh non-public seed. The seed
+// is sent to the logical client helper over a pipe and is never included in the
+// public material returned to the ordinary PIR server.
+absl::Status RunPrivateResearchLifecycle(const std::string& program, const std::string& dll,
+    const std::string& log, const hintless_vbs::PrivateResearchMaterialRequest& request,
+    AuthenticatedInstaller& installer, hintless_vbs::RawMaterial& raw,
+    hintless_vbs::PrivateResearchLifecycleMetrics& metrics);
 }  // namespace hintless_pir::vbs

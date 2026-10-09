@@ -1,0 +1,64 @@
+Computing main repo mapping: 
+Loading: 
+Loading: 0 packages loaded
+Analyzing: target //vbs_material:client_journal_test (0 packages loaded, 0 targets configured)
+Analyzing: target //vbs_material:client_journal_test (0 packages loaded, 0 targets configured)
+[0 / 1] [Prepa] BazelWorkspaceStatusAction stable-status.txt
+INFO: Analyzed target //vbs_material:client_journal_test (2 packages loaded, 8 targets configured).
+[1,148 / 1,469] Compiling bazel/expanded_template/expand_template.cc [for tool]; 1s linux-sandbox ... (4 actions, 3 running)
+[1,200 / 1,468] Compiling src/google/protobuf/compiler/cpp/field.cc [for tool]; 0s linux-sandbox ... (4 actions, 3 running)
+[1,204 / 1,468] Compiling src/google/protobuf/compiler/cpp/file.cc [for tool]; 1s linux-sandbox ... (5 actions, 4 running)
+[1,210 / 1,468] Compiling src/google/protobuf/compiler/cpp/message.cc [for tool]; 1s linux-sandbox ... (5 actions, 4 running)
+[1,215 / 1,468] Compiling src/google/protobuf/compiler/cpp/message.cc [for tool]; 2s linux-sandbox ... (4 actions, 3 running)
+[1,223 / 1,468] Compiling src/google/protobuf/compiler/cpp/string_field.cc [for tool]; 1s linux-sandbox ... (4 actions, 3 running)
+[1,230 / 1,468] Compiling src/google/protobuf/compiler/csharp/csharp_map_field.cc [for tool]; 0s linux-sandbox ... (4 actions, 3 running)
+[1,239 / 1,468] Compiling src/google/protobuf/compiler/csharp/csharp_repeated_message_field.cc [for tool]; 0s linux-sandbox ... (3 actions, 2 running)
+[1,247 / 1,468] Compiling src/google/protobuf/compiler/java/enum.cc [for tool]; 0s linux-sandbox ... (4 actions, 3 running)
+[1,252 / 1,468] Compiling src/google/protobuf/compiler/java/enum_lite.cc [for tool]; 0s linux-sandbox ... (5 actions, 4 running)
+[1,258 / 1,468] Compiling src/google/protobuf/compiler/java/file.cc [for tool]; 1s linux-sandbox ... (4 actions, 3 running)
+[1,263 / 1,468] Compiling src/google/protobuf/compiler/java/helpers.cc [for tool]; 1s linux-sandbox ... (4 actions, 3 running)
+[1,268 / 1,468] Compiling src/google/protobuf/compiler/java/message.cc [for tool]; 1s linux-sandbox ... (4 actions, 3 running)
+INFO: From Compiling src/google/protobuf/message_lite.cc [for tool]:
+In file included from /usr/include/string.h:535,
+                 from external/protobuf~/src/google/protobuf/stubs/port.h:39,
+                 from external/protobuf~/src/google/protobuf/stubs/common.h:48,
+                 from external/protobuf~/src/google/protobuf/message_lite.h:46,
+                 from external/protobuf~/src/google/protobuf/message_lite.cc:36:
+In function 'void* memcpy(void*, const void*, size_t)',
+    inlined from 'uint8_t* google::protobuf::io::EpsCopyOutputStream::WriteRaw(const void*, int, uint8_t*)' at external/protobuf~/src/google/protobuf/io/coded_stream.h:684:16,
+    inlined from 'virtual uint8_t* google::protobuf::internal::ImplicitWeakMessage::_InternalSerialize(uint8_t*, google::protobuf::io::EpsCopyOutputStream*) const' at external/protobuf~/src/google/protobuf/implicit_weak_message.h:103:28,
+    inlined from 'bool google::protobuf::MessageLite::SerializePartialToZeroCopyStream(google::protobuf::io::ZeroCopyOutputStream*) const' at external/protobuf~/src/google/protobuf/message_lite.cc:411:30:
+/usr/include/x86_64-linux-gnu/bits/string_fortified.h:29:33: warning: 'void* __builtin___memcpy_chk(void*, const void*, long unsigned int, long unsigned int)' specified size between 18446744071562067968 and 18446744073709551615 exceeds maximum object size 9223372036854775807 [-Wstringop-overflow=]
+   29 |   return __builtin___memcpy_chk (__dest, __src, __len,
+      |          ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~
+   30 |                                  __glibc_objsize0 (__dest));
+      |                                  ~~~~~~~~~~~~~~~~~~~~~~~~~~
+[1,273 / 1,468] Compiling src/google/protobuf/compiler/java/message_lite.cc [for tool]; 0s linux-sandbox ... (4 actions, 3 running)
+[1,280 / 1,468] Compiling src/google/protobuf/compiler/java/shared_code_generator.cc [for tool]; 0s linux-sandbox ... (4 actions, 3 running)
+[1,289 / 1,468] Compiling src/google/protobuf/compiler/objectivec/objectivec_field.cc [for tool]; 0s linux-sandbox ... (4 actions, 3 running)
+[1,293 / 1,468] Compiling src/google/protobuf/compiler/objectivec/objectivec_helpers.cc [for tool]; 0s linux-sandbox ... (4 actions, 3 running)
+[1,298 / 1,468] Compiling src/google/protobuf/compiler/objectivec/objectivec_message.cc [for tool]; 1s linux-sandbox ... (5 actions, 4 running)
+[1,304 / 1,468] Compiling src/google/protobuf/compiler/php/php_generator.cc [for tool]; 1s linux-sandbox ... (4 actions, 3 running)
+[1,309 / 1,468] Compiling src/google/protobuf/compiler/python/pyi_generator.cc [for tool]; 0s linux-sandbox ... (4 actions, 3 running)
+[1,314 / 1,468] Compiling src/google/protobuf/extension_set.cc [for tool]; 1s linux-sandbox ... (4 actions, 3 running)
+[1,320 / 1,468] Compiling src/google/protobuf/compiler/parser.cc [for tool]; 1s linux-sandbox ... (4 actions, 3 running)
+[1,322 / 1,468] Compiling src/google/protobuf/descriptor.cc [for tool]; 1s linux-sandbox ... (4 actions, 3 running)
+[1,326 / 1,468] Compiling src/google/protobuf/descriptor.cc [for tool]; 3s linux-sandbox ... (4 actions, 3 running)
+[1,332 / 1,468] Compiling src/google/protobuf/descriptor.cc [for tool]; 4s linux-sandbox ... (4 actions, 3 running)
+[1,335 / 1,468] Compiling src/google/protobuf/descriptor.cc [for tool]; 5s linux-sandbox ... (5 actions, 4 running)
+[1,340 / 1,468] Compiling src/google/protobuf/map_field.cc [for tool]; 0s linux-sandbox ... (5 actions, 4 running)
+[1,347 / 1,468] Compiling src/google/protobuf/struct.pb.cc [for tool]; 0s linux-sandbox ... (4 actions, 3 running)
+[1,353 / 1,468] Compiling src/google/protobuf/util/message_differencer.cc [for tool]; 0s linux-sandbox ... (4 actions, 3 running)
+[1,358 / 1,468] Compiling src/google/protobuf/util/internal/default_value_objectwriter.cc [for tool]; 0s linux-sandbox ... (4 actions, 3 running)
+[1,365 / 1,468] Compiling src/google/protobuf/util/internal/proto_writer.cc [for tool]; 0s linux-sandbox ... (5 actions, 4 running)
+[1,382 / 1,467] [Prepa] Generating proto_library //local_material:serialization_proto
+INFO: Found 1 test target...
+Target //vbs_material:client_journal_test up-to-date:
+  bazel-bin/vbs_material/client_journal_test
+INFO: Elapsed time: 37.283s, Critical Path: 6.39s
+INFO: 196 processes: 3 internal, 193 linux-sandbox.
+INFO: Build completed successfully, 196 total actions
+//vbs_material:client_journal_test                              (cached) PASSED in 0.2s
+
+Executed 0 out of 1 test: 1 test passes.
+There were tests whose specified size is too big. Use the --test_verbose_timeout_warnings command line option to see which ones these are.

@@ -1,10 +1,12 @@
-// Correctness harness only: Windows uses PUBLIC test secrets, and this process
-// owns the synthetic database and plaintext oracle. Not a private PIR endpoint.
+// Correctness harness only. Private-research modes use fresh client seeds and
+// the real encrypted VBS path, but this process still owns both the synthetic
+// client oracle and server; it is not a production network endpoint.
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <signal.h>
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -44,6 +46,14 @@ template <typename T> T Take(absl::StatusOr<T> value) {
   return std::move(value).value();
 }
 void Check(absl::Status status) { if (!status.ok()) Fail(status.ToString()); }
+void Wipe(void* value, size_t size) {
+  volatile unsigned char* bytes = static_cast<volatile unsigned char*>(value);
+  while (size--) *bytes++ = 0;
+}
+uint64_t ElapsedNs(std::chrono::steady_clock::time_point start) {
+  return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+      std::chrono::steady_clock::now() - start).count());
+}
 std::string Hex(const std::string& value) {
   std::ostringstream out;
   for (unsigned char c : value) out << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(c);
@@ -163,19 +173,26 @@ void VerifyAllMaterialRelations(const lm::Parameters& params, const lm::Generato
 
 int main(int argc, char** argv) {
   if (argc < 5 || argc > 6) {
-    std::cerr << "Usage: material_interop_test native|enclave|native-lifecycle|enclave-lifecycle functional|8mb WINDOWS_EXE OUTPUT_DIR [WINDOWS_DLL_PATH]\n";
+    std::cerr << "Usage: material_interop_test native|enclave|native-lifecycle|enclave-lifecycle|native-private-lifecycle|enclave-private-lifecycle functional|8mb|512mb|2gb|8gb WINDOWS_EXE OUTPUT_DIR [WINDOWS_DLL_PATH]\n";
     return 2;
   }
   const std::string mode = argv[1];
-  const bool lifecycle = mode == "native-lifecycle" || mode == "enclave-lifecycle";
-  const bool enclave = mode == "enclave" || mode == "enclave-lifecycle";
-  if ((!enclave && mode != "native" && mode != "native-lifecycle") || (enclave && argc != 6)) return 2;
+  const bool private_lifecycle = mode == "native-private-lifecycle" ||
+                                 mode == "enclave-private-lifecycle";
+  const bool lifecycle = mode == "native-lifecycle" || mode == "enclave-lifecycle" ||
+                         private_lifecycle;
+  const bool enclave = mode == "enclave" || mode == "enclave-lifecycle" ||
+                       mode == "enclave-private-lifecycle";
+  if ((!enclave && mode != "native" && mode != "native-lifecycle" &&
+       mode != "native-private-lifecycle") || (enclave && argc != 6)) return 2;
   signal(SIGPIPE, SIG_IGN);
   const std::string profile = argv[2], program = argv[3], output_dir = argv[4];
   WindowsPath(output_dir + "/check");
   std::filesystem::create_directories(output_dir);
   auto params = Take(lm::ParametersForProfile(profile));
+  const auto setup_start = std::chrono::steady_clock::now();
   auto server = Take(lm::PreparedServer::Create(params));
+  const uint64_t server_setup_ns = ElapsedNs(setup_start);
   std::unique_ptr<vbs::AuthenticatedInstaller> installer;
   std::unique_ptr<vbs::ClientJournal> journal;
   std::string journal_directory;
@@ -187,11 +204,15 @@ int main(int argc, char** argv) {
     journal = Take(vbs::ClientJournal::Open(journal_directory + "/client.log"));
   }
   auto pub = server->PublicParams();
+  uint64_t static_rlwe_component_bytes = 0;
+  for (const auto& hint : pub.linpir_response_hints())
+    static_rlwe_component_bytes += hint.ByteSizeLong();
   auto config = lm::MakeGeneratorConfig(params, pub);
   auto context = Take(Context::CreateForBfvFiniteFieldEncoding(12, params.linpir_params.qs, {}, params.linpir_params.ts[0]));
   const int64_t indices[] = {0, params.db_rows * params.db_cols - 1,
                              (params.db_rows / 2) * params.db_cols + params.db_cols / 2};
   std::vector<std::string> records;
+  std::vector<std::string> completed_material_ids;
   for (uint32_t c = 0; c < 3; ++c) {
     native::PublicMaterialTestRequest request{};
     request.version = 1; request.size = sizeof(request); request.case_index = c;
@@ -204,17 +225,48 @@ int main(int argc, char** argv) {
       memcpy(request.config.ciphertext_pad_seeds[i], config.ciphertext_pad_seeds(i).data(), 64);
     }
     const std::string base = output_dir + "/" + profile + "-" + std::to_string(c);
-    BYTE master[32], id[32];
-    native::PublicTestSecrets(c, master, id);
+    BYTE master[32]{}, id[32]{}, challenge[32]{};
+    native::PrivateResearchMaterialRequest private_request{};
+    if (private_lifecycle) {
+      auto random_master = Take(lm::RandomId());
+      auto random_id = Take(lm::RandomId());
+      auto random_challenge = Take(lm::RandomId());
+      if (random_master.size() != 32 || random_id.size() != 32 || random_challenge.size() != 32)
+        Fail("Unexpected random identifier length.");
+      memcpy(master, random_master.data(), 32);
+      memcpy(id, random_id.data(), 32);
+      memcpy(challenge, random_challenge.data(), 32);
+      private_request.version = 1; private_request.size = sizeof(private_request);
+      private_request.config = request.config;
+      memcpy(private_request.material_id, id, 32);
+      memcpy(private_request.master_seed, master, 32);
+      memcpy(private_request.challenge, challenge, 32);
+      Wipe(random_master.data(), random_master.size());
+      Wipe(random_id.data(), random_id.size());
+      Wipe(random_challenge.data(), random_challenge.size());
+    } else {
+      native::PublicTestSecrets(c, master, id);
+    }
     const std::string material_id(reinterpret_cast<char*>(id), 32);
-    Write(base + ".request.bin", request);
+    if (std::find(completed_material_ids.begin(), completed_material_ids.end(), material_id) !=
+        completed_material_ids.end()) Fail("Random material identifier repeated within one run.");
+    completed_material_ids.push_back(material_id);
+    if (!private_lifecycle) Write(base + ".request.bin", request);
     auto raw = std::make_unique<native::RawMaterial>();
+    native::PrivateResearchLifecycleMetrics lifecycle_metrics{};
     if (lifecycle) {
       Check(journal->Begin(config.config_id(), material_id));
-      Check(vbs::RunPublicLifecycle(program, enclave ? argv[5] : "", base + ".backend.log", request, *installer, *raw));
+      if (private_lifecycle) {
+        Check(vbs::RunPrivateResearchLifecycle(program, enclave ? argv[5] : "",
+            base + ".backend.log", private_request, *installer, *raw, lifecycle_metrics));
+        Wipe(private_request.master_seed, sizeof(private_request.master_seed));
+      } else {
+        Check(vbs::RunPublicLifecycle(program, enclave ? argv[5] : "",
+            base + ".backend.log", request, *installer, *raw));
+      }
       Check(journal->Ready(material_id));
       Write(base + ".material.bin", *raw);
-      if (c == 0) for (int corrupt = 1; corrupt <= 4; ++corrupt) {
+      if (!private_lifecycle && c == 0) for (int corrupt = 1; corrupt <= 4; ++corrupt) {
         auto rejected = request; rejected.case_index = 10 + corrupt;
         auto unused = std::make_unique<native::RawMaterial>();
         Check(vbs::RunPublicLifecycle(program, enclave ? argv[5] : "", base + ".reject-" + std::to_string(corrupt) + ".log",
@@ -241,13 +293,21 @@ int main(int argc, char** argv) {
     VerifyAllMaterialRelations(params, config, material, lwe_seed, rlwe_seed);
     auto client = Take(hintless_pir::hintless_simplepir::Client::CreateForPreparedMaterial(params, pub, Hex(prep.material_id()), rlwe_seed));
     if (lifecycle) Check(journal->Reserve(material_id));
+    const auto online_start = std::chrono::steady_clock::now();
+    auto stage_start = online_start;
     auto low = Take(client->GeneratePreparedRequest(indices[c], lwe_seed));
     lm::Query query;
     query.set_config_id(config.config_id()); query.set_material_id(prep.material_id()); query.set_request_id(Take(lm::RandomId()));
     *query.mutable_lwe_query() = low.ct_query_vector();
+    const uint64_t query_generation_ns = ElapsedNs(stage_start);
     if (lifecycle) Check(journal->Commit(material_id, query.SerializeAsString()));
+    stage_start = std::chrono::steady_clock::now();
     auto response = Take(server->Handle(query));
+    const uint64_t server_handle_ns = ElapsedNs(stage_start);
+    stage_start = std::chrono::steady_clock::now();
     auto record = Take(client->RecoverRecord(response.pir_response()));
+    const uint64_t recovery_ns = ElapsedNs(stage_start);
+    const uint64_t online_total_ns = ElapsedNs(online_start);
     if (record != Take(server->ExpectedRecord(indices[c]))) Fail("Recovered record differs from original database, case " + std::to_string(c));
     auto retry_query = query;
     if (lifecycle && (!retry_query.ParseFromString(Take(journal->Retry(material_id))) ||
@@ -261,25 +321,64 @@ int main(int argc, char** argv) {
       Check(journal->Finish(material_id));
       if (journal->Retry(material_id).ok() || journal->Reserve(material_id).ok()) Fail("Finished journal material reused.");
     }
-    records.push_back("{\"case\":" + std::to_string(c) + ",\"index\":" + std::to_string(indices[c]) +
-        ",\"record_correct\":true,\"all_rlwe_noise_relations_checked\":true,\"retry_checked\":true,\"reuse_rejected\":true,\"material_payload_bytes\":" + std::to_string(material.ByteSizeLong()) + "}");
+    uint64_t online_rlwe_component_bytes = 0;
+    for (const auto& limb : response.pir_response().linpir_responses())
+      online_rlwe_component_bytes += limb.ByteSizeLong();
+    std::string case_record = "{\"case\":" + std::to_string(c) + ",\"index\":" + std::to_string(indices[c]) +
+        ",\"record_correct\":true,\"all_rlwe_noise_relations_checked\":true,\"retry_checked\":true,\"reuse_rejected\":true,\"material_payload_bytes\":" + std::to_string(material.ByteSizeLong()) +
+        ",\"online_query_bytes\":" + std::to_string(query.ByteSizeLong()) +
+        ",\"online_response_bytes\":" + std::to_string(response.ByteSizeLong()) +
+        ",\"online_rlwe_component_bytes\":" + std::to_string(online_rlwe_component_bytes);
+    case_record += ",\"query_generation_ns\":" + std::to_string(query_generation_ns) +
+        ",\"server_handle_ns\":" + std::to_string(server_handle_ns) +
+        ",\"recovery_ns\":" + std::to_string(recovery_ns) +
+        ",\"online_total_ns\":" + std::to_string(online_total_ns);
+    if (private_lifecycle) {
+      case_record += ",\"enclave_load_ns\":" + std::to_string(lifecycle_metrics.enclave_load_ns) +
+          ",\"channel_begin_ns\":" + std::to_string(lifecycle_metrics.channel_begin_ns) +
+          ",\"client_seal_ns\":" + std::to_string(lifecycle_metrics.client_seal_ns) +
+          ",\"enclave_generate_ns\":" + std::to_string(lifecycle_metrics.enclave_generate_ns) +
+          ",\"receipt_accept_ns\":" + std::to_string(lifecycle_metrics.receipt_accept_ns) +
+          ",\"installation_roundtrip_ns\":" + std::to_string(lifecycle_metrics.installation_roundtrip_ns) +
+          ",\"material_lifecycle_total_ns\":" + std::to_string(lifecycle_metrics.total_ns);
+    }
+    case_record += "}";
+    records.push_back(std::move(case_record));
+    Wipe(master, sizeof(master));
+    Wipe(challenge, sizeof(challenge));
   }
   if (lifecycle) {
     journal.reset();
     journal = Take(vbs::ClientJournal::Open(journal_directory + "/client.log"));
-    for (uint32_t c = 0; c < 3; ++c) {
-      BYTE master[32], id[32]; native::PublicTestSecrets(c, master, id);
-      if (Take(journal->State(std::string(reinterpret_cast<char*>(id), 32))) != vbs::DurableState::kDone)
+    for (const auto& material_id : completed_material_ids) {
+      if (Take(journal->State(material_id)) != vbs::DurableState::kDone)
         Fail("Journal restart lost terminal tombstone.");
     }
     journal.reset();
     // Only this newly created private test directory is removed.
     std::filesystem::remove_all(journal_directory);
   }
-  std::cout << "{\"backend\":\"" << (enclave ? "vbs-enclave-public-material-test" : "windows-native-material-NOT-TEE")
+  const char* backend = private_lifecycle ?
+      (enclave ? "vbs-enclave-private-seed-research" : "windows-native-private-seed-research-NOT-TEE") :
+      (enclave ? "vbs-enclave-public-material-test" : "windows-native-material-NOT-TEE");
+  std::ostringstream result;
+  result << "{\"backend\":\"" << backend
             << "\",\"real_attestation_verified\":false,\"authenticated_installation_and_journal\":" << (lifecycle ? "true" : "false")
-            << ",\"installation_negative_cases\":" << (lifecycle ? 4 : 0)
-            << ",\"public_test_secrets_only\":true,\"profile\":\"" << profile << "\",\"correct_queries\":3,\"cases\":[";
-  for (size_t i = 0; i < records.size(); ++i) std::cout << (i ? "," : "") << records[i];
-  std::cout << "]}\n";
+            << ",\"installation_negative_cases\":" << ((lifecycle && !private_lifecycle) ? 4 : 0)
+            << ",\"public_test_secrets_only\":" << (private_lifecycle ? "false" : "true")
+            << ",\"private_seed_channel_executed\":" << (private_lifecycle ? "true" : "false")
+            << ",\"attestation_scope\":\"" << (enclave ? "local-report-binding-only" : "public-fixture-no-platform-trust") << "\""
+            << ",\"client_server_process_isolation\":false"
+            << ",\"profile\":\"" << profile << "\",\"database_bytes\":"
+            << params.db_rows * params.db_cols * params.db_record_bit_size / 8
+            << ",\"server_setup_ns\":" << server_setup_ns
+            << ",\"public_setup_bytes\":" << pub.ByteSizeLong()
+            << ",\"static_rlwe_component_bytes\":" << static_rlwe_component_bytes
+            << ",\"correct_queries\":3,\"cases\":[";
+  for (size_t i = 0; i < records.size(); ++i) result << (i ? "," : "") << records[i];
+  result << "]}\n";
+  std::ofstream result_file(output_dir + "/result.json", std::ios::binary);
+  result_file << result.str();
+  if (!result_file) Fail("Writing experiment result failed.");
+  std::cout << result.str();
 }

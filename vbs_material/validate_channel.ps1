@@ -26,8 +26,15 @@ foreach ($profile in @('functional','8mb')) {
         !$_.record_correct -or !$_.all_rlwe_noise_relations_checked -or !$_.retry_checked -or !$_.reuse_rejected
     }).Count) { throw "Incomplete interop checks for $profile" }
     $result.backend = $(if($Backend -eq 'native'){'windows-native-encrypted-channel-NOT-TEE'}else{'vbs-encrypted-material-public-test'})
-    $result | Add-Member -NotePropertyName real_attestation_verified -NotePropertyValue $false
-    $result | Add-Member -NotePropertyName generation_receipt_verified -NotePropertyValue $true
+    # The backend emits the attestation boundary itself. Preserve that value
+    # when present so rerunning the real enclave path does not fail while
+    # decorating the aggregate experiment result.
+    if ($null -eq $result.PSObject.Properties['real_attestation_verified']) {
+        $result | Add-Member -NotePropertyName real_attestation_verified -NotePropertyValue $false
+    }
+    if ($null -eq $result.PSObject.Properties['generation_receipt_verified']) {
+        $result | Add-Member -NotePropertyName generation_receipt_verified -NotePropertyValue $true
+    }
     $result | Add-Member -NotePropertyName timestamp_utc -NotePropertyValue ([DateTime]::UtcNow.ToString('o'))
     $result | Add-Member -NotePropertyName test_binary_sha256 -NotePropertyValue $binaryHash
     $result | Add-Member -NotePropertyName enclave_binary_sha256 -NotePropertyValue $(if($Backend -eq 'enclave'){(Get-FileHash -LiteralPath (Join-Path $BuildDir 'hintless_vbs_probe.dll')).Hash}else{$null})

@@ -22,7 +22,8 @@ struct Child {
     if (output >= 0) close(output);
     if (pid > 0) { kill(pid, SIGKILL); while (waitpid(pid, nullptr, 0) < 0 && errno == EINTR) {} }
   }
-  absl::Status Start(const std::string& program, const std::string& dll, const std::string& log) {
+  absl::Status Start(const std::string& program, const std::string& dll,
+                     const std::string& log, bool private_research = false) {
     int to[2], from[2];
     if (pipe2(to, O_CLOEXEC)) return Bad("Cannot create client input pipe.");
     if (pipe2(from, O_CLOEXEC)) { close(to[0]); close(to[1]); return Bad("Cannot create client output pipe."); }
@@ -31,8 +32,11 @@ struct Child {
       if (dup2(to[0], STDIN_FILENO) < 0 || dup2(from[1], STDOUT_FILENO) < 0 ||
           !freopen(log.c_str(), "w", stderr)) _exit(127);
       close(to[0]); close(to[1]); close(from[0]); close(from[1]);
-      if (dll.empty()) execl(program.c_str(), program.c_str(), "--native-lifecycle", nullptr);
-      else execl(program.c_str(), program.c_str(), "--enclave-lifecycle", dll.c_str(), nullptr);
+      if (dll.empty()) execl(program.c_str(), program.c_str(),
+          private_research ? "--private-native-lifecycle" : "--native-lifecycle", nullptr);
+      else execl(program.c_str(), program.c_str(),
+          private_research ? "--private-enclave-lifecycle" : "--enclave-lifecycle",
+          dll.c_str(), nullptr);
       _exit(127);
     }
     close(to[0]); close(from[1]); input = to[1]; output = from[0];
@@ -108,6 +112,39 @@ absl::Status RunPublicLifecycle(const std::string& program, const std::string& d
   RLWE_RETURN_IF_ERROR(child.Transfer(true, &ack, sizeof(ack)));
   RLWE_RETURN_IF_ERROR(child.Transfer(false, &status, sizeof(status)));
   if ((corruption == 0 && status != 0) || (corruption != 0 && status >= 0)) return Bad("Unexpected installation authentication result.");
+  return child.Finish();
+}
+
+absl::Status RunPrivateResearchLifecycle(const std::string& program, const std::string& dll,
+    const std::string& log, const wire::PrivateResearchMaterialRequest& request,
+    AuthenticatedInstaller& installer, wire::RawMaterial& raw,
+    wire::PrivateResearchLifecycleMetrics& metrics) {
+  Child child;
+  RLWE_RETURN_IF_ERROR(child.Start(program, dll, log, true));
+  wire::PrivateResearchLifecycleInput input{}; input.request = request;
+  memcpy(input.pinned_server_key, installer.PublicKey().data(), 65);
+  memcpy(input.server_epoch, installer.Epoch().data(), 32);
+  RLWE_RETURN_IF_ERROR(child.Transfer(true, &input, sizeof(input)));
+  memset(input.request.master_seed, 0, sizeof(input.request.master_seed));
+  int32_t status = 0;
+  RLWE_RETURN_IF_ERROR(child.Transfer(false, &status, sizeof(status)));
+  if (status != 0) return Bad("Private lifecycle preparation rejected; inspect backend log.");
+  RLWE_RETURN_IF_ERROR(child.Transfer(false, &raw, sizeof(raw)));
+  wire::InstallationBinding binding{};
+  RLWE_RETURN_IF_ERROR(child.Transfer(false, &binding, sizeof(binding)));
+  auto wrong = binding; wrong.server_epoch[0] ^= 1;
+  if (installer.Install(raw, wrong).ok()) return Bad("Installer accepted wrong server epoch.");
+  wrong = binding; wrong.material_digest[0] ^= 1;
+  if (installer.Install(raw, wrong).ok()) return Bad("Installer accepted wrong material hash.");
+  RLWE_ASSIGN_OR_RETURN(auto ack, installer.Install(raw, binding));
+  RLWE_ASSIGN_OR_RETURN(auto retried, installer.Install(raw, binding));
+  if (memcmp(&ack, &retried, sizeof(ack))) return Bad("Installation retry was not byte-identical.");
+  RLWE_RETURN_IF_ERROR(child.Transfer(true, &ack, sizeof(ack)));
+  RLWE_RETURN_IF_ERROR(child.Transfer(false, &status, sizeof(status)));
+  RLWE_RETURN_IF_ERROR(child.Transfer(false, &metrics, sizeof(metrics)));
+  if (status != 0 || metrics.version != 1 || metrics.size != sizeof(metrics) ||
+      !metrics.total_ns || (dll.empty() ? metrics.enclave_load_ns != 0 : !metrics.enclave_load_ns))
+    return Bad("Invalid private lifecycle result or timing record.");
   return child.Finish();
 }
 }  // namespace hintless_pir::vbs

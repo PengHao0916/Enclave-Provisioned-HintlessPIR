@@ -1,6 +1,6 @@
 # 加密材料通道：实现与证据边界
 
-更新：2026-09-20。当前已实现计算/通道核心和公开测试连接；真实 VBS 加载仍返回 577，可信客户端证明验证尚未实现。
+更新：2026-09-22。计算、HPKE 通道、真实 VBS 执行、安装确认和一次性查询闭环均已实现。新增研究后端使用每份材料独立生成的随机客户端种子；本机报告只验证格式、请求绑定和非调试声明，完整远程证明链尚未实现。
 
 ## 协议顺序
 
@@ -12,7 +12,7 @@
 6. **输出公共材料与生成回执。** 公共材料交给普通服务器。回执包含会话摘要、完整密文请求摘要、RawMaterial 摘要，并使用 HPKE Export 的独立上下文派生 HMAC-SHA256 密钥。客户端校验 MAC 与本地请求绑定。
 7. **普通服务器安装、在线 PIR。** 生成回执只确认生成。新增安装器在实际 PIR 安装成功后签署绑定材料摘要和客户端 nonce 的确认，客户端验签后才允许查询，并在发出查询前持久化状态与报文。客户端之后再选择查询位置，普通服务器执行原 PIR，客户端按原恢复流程解密。详见 [LIFECYCLE.md](LIFECYCLE.md)。
 
-第 1—7 步的计算、报文逻辑和安装/日志测试链路已编码；第 3 步完整可信验证器与生产传输集成仍未完成。现有测试使用公共种子，不能作为真实保密后端。
+第 1—7 步的计算、报文逻辑和安装/日志链路已编码。公开回归路径使用固定种子；`enclave-private-lifecycle` 研究路径每份材料新建 32 字节随机种子，由逻辑客户端经 HPKE 封装后交给真实 VBS。完整远程证明、生产传输和操作系统级客户端/服务器隔离仍未完成。
 
 ## 实际 enclave 边界
 
@@ -48,7 +48,8 @@ validate_channel.ps1 -Backend native 进一步完成 functional、8mb 各 3 次�
 
 - native 路径使用 PublicFixtureVerifier，仅核对公开测试报文。
 - enclave 公开诊断路径使用 PublicReportBindingOnlyVerifier，只核对报告格式、绑定和声明的非调试字段，不认证平台签名。它只能搭配代码内预定的公开种子。
-- 这两个适配器仅编译进 channel_test_host.exe，不链接到 enclave DLL，也不作为默认客户端验证器。测试宿主没有任意私密种子参数或关闭真实验证的部署选项。
+- 私密研究路径也使用 PublicReportBindingOnlyVerifier，因此只适合论文级本机实验。随机种子通过继承管道进入逻辑客户端进程；普通 PIR 服务器接收的只有公共材料。结果文件明确记录 `real_attestation_verified=false` 和 `client_server_process_isolation=false`。
+- 这些适配器仅编译进 channel_test_host.exe，不链接到 enclave DLL，也不作为默认客户端验证器。私密入口不是可部署的网络 API。
 - UnavailableAttestationVerifier 是未配置真实验证策略时的默认实现，拒绝请求。宿主给出的布尔值、JSON 或“本机验证成功”不能替代可信客户端验证。
 
 测试向量来自 RFC 9180 对应 CFRG JSON；选择的数据和下载文件摘要保存在 testdata/hpke-p256-base.json，固定头文件 hpke_test_vector.h 纳入构建哈希。
@@ -66,9 +67,10 @@ $out = 'D:\04_DATA\ACM TOPS\native_tee_build'
 ```powershell
 & "$out\source\run_probe.ps1" -BuildDir $out
 & "$out\source\validate_channel.ps1" -Backend enclave
+& "$out\source\validate_private_backend.ps1" -Runs 10
 ```
 
-9 月 21 日关闭 Secure Boot、启用 TESTSIGNING 并重启后，同一签名 DLL 已完成真实 `LoadEnclaveImageW`、初始化和调用；隔离区内 68 项检查通过。随后 functional、8mb 各 3 次公开种子查询通过实际 enclave HPKE/材料路径并正确恢复，没有 native 回退。平台报告仍由测试适配器做格式、绑定与非调试字段检查，尚未完成可信客户端证明验证。
+9 月 22 日的私密研究后端在同一签名 DLL 上完成 functional、8mb 各 10 轮、30 次正确查询；全部噪声/RNS 关系、精确重试和复用拒绝检查通过。8mb 的 VBS 材料生命周期均值为 67.77 ms，服务器处理均值为 281.00 ms，在线总时延均值为 324.91 ms。完整统计位于 `private-vbs-research-results.json`。
 
 ## 通信与安全范围
 

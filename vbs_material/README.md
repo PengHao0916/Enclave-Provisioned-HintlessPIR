@@ -1,6 +1,6 @@
 # Windows VBS enclave：一次性材料工厂接入
 
-**2026-09-21：非调试 VBS enclave DLL 已在本机完成真实加载、初始化和调用，隔离区内 68 项检查通过；HPKE 输入、一次性材料生成、服务器安装确认和客户端日志已完成公开固定种子的端到端测试。** 可信客户端证明验证与生产传输集成尚未完成，因此没有可用于私密查询的完整生产后端。
+**2026-09-22：非调试 VBS enclave DLL 已在本机完成真实加载、初始化和调用；私密随机客户端种子经 HPKE 进入实际 VBS，生成一次性材料并完成安装、查询、恢复和消费闭环。** functional 与 8mb 各运行 10 轮、30 次查询，全部恢复正确。该实现面向论文实验：证明范围是本机报告绑定，逻辑客户端和服务器仍由同一测试程序编排，不宣称生产级远程证明或网络隔离。
 
 本目录使用 Windows 原生 enclave API，无模拟器回退。`local_material/` 的三进程模拟器仍是独立的 local-simulation-NOT-TEE 后端。
 
@@ -21,22 +21,24 @@
 | VBS 支持 / CreateEnclave | true / 成功 | 平台 API 支持，真实隔离区可创建 |
 | Load / Initialize / Call | 全部成功 | 实际 VBS enclave 执行，隔离区内 68 项检查通过，非 native 回退 |
 | 真实 enclave 生命周期查询 | functional、8mb 各 3 次正确恢复 | 公开固定种子经过实际 enclave HPKE/材料路径，安装确认、日志、查询和恢复通过 |
+| 私密随机种子研究后端 | functional、8mb 各 10 轮、30 次查询，全部正确 | 每次新生成 32 字节客户端种子；种子经管道进入逻辑客户端、HPKE 加密后进入真实 VBS；普通 PIR 服务器只接收公共材料 |
+| 私密后端时延统计 | 8mb：材料生命周期均值 67.77 ms；服务器处理均值 281.00 ms；在线总时延均值 324.91 ms | 30 个样本的均值、中位数、样本标准差、P95、最小值和最大值均已记录 |
 | TESTSIGNING / HVCI | 生效 / 运行 | 本机开发测试条件；Secure Boot 已临时关闭，不是生产部署配置 |
 
-原生互操作测试使用**公开固定测试种子**，不是私密客户端会话，不是 TEE 性能实验或安全证明。测试仅覆盖两个明确配置，不建立参数的安全强度或正确性失败率结论。material_payload_bytes 仅为生成的公共材料序列化大小，不是端到端通信总量。
+公开回归测试仍使用固定种子；新增的 private research 路径使用每份材料独立生成的随机种子，并记录真实 VBS 冷启动、通道、生成、安装和 PIR 各阶段时间。测试仅覆盖两个明确配置，不建立参数的安全强度或正确性失败率结论。`material_payload_bytes` 仅为公共材料序列化大小，不是端到端通信总量。
 
-最新真实执行证据位于 [VBS 实际执行结果](results/2026-09-21-real-vbs/)。[安装与生命周期结果](results/2026-09-21-lifecycle/)、[加密通道结果](results/2026-09-20-channel/)和[材料移植结果](results/2026-09-18-material-port/)保留较早快照，不能用旧哈希指认当前程序。协议说明见 [CHANNEL.md](CHANNEL.md) 和 [LIFECYCLE.md](LIFECYCLE.md)。
+最新私密研究后端证据位于 [2026-09-22 结果](results/2026-09-22-private-vbs/)；较早的 [VBS 实际执行结果](results/2026-09-21-real-vbs/)、安装生命周期、公开通道和材料移植目录是历史快照，不能用旧哈希指认当前程序。协议说明见 [CHANNEL.md](CHANNEL.md) 和 [LIFECYCLE.md](LIFECYCLE.md)。
 
 ## 构造与边界
 
 保持已确定的分工：TEE 只生成一次性材料。数据库 D、公共矩阵 A、hint H、查询位置均不进入工厂，普通服务器承担在线 PIR。
 
-1. 客户端持有每份材料独立的 32 字节主种子和材料编号。先由可信证明验证器认证 enclave 身份、平台与通道公钥，再用 HPKE 加密种子。加密和校验门控已实现；**真实证明验证器尚未实现，默认验证器拒绝全部请求。**
+1. 客户端持有每份材料独立的 32 字节主种子和材料编号。论文实验路径通过继承管道把种子交给逻辑客户端进程，客户端核对本机 VBS 报告的格式、请求绑定和非调试声明后，用 HPKE 加密种子。完整远程平台证明链未实现，因此结果字段明确记录 `real_attestation_verified=false`。
 2. enclave 内以配置摘要和材料编号做域分离，派生独立 LWE 秘密 s 与 RLWE 密钥 v；执行全部 CRT 分支的 Enc_v(s) 与完整 Galois key 生成。当前已完成这一计算核心的移植和编译。
 3. 普通宿主得到公共材料和 HPKE exporter 派生的 MAC 生成回执。另由普通 PIR 服务器在实际安装成功后签署确认；客户端匹配两个回执的材料摘要并验签后才允许查询。已实现客户端日志的普通崩溃/重启保护；跨客户端授权、生产密钥管理和快照回滚保护仍待实现。安装签名认证服务器声明，不证明恶意服务器诚实保存。
 4. 客户端之后按需选择查询位置，在线发送 LWE 查询与材料编号。普通服务器使用缓存材料计算 PIR；客户端结合静态公开响应分量恢复数据。上述 Windows 原生测试已与现有 Linux 流程互操作。
 
-保留的 HintlessPublicMaterialTest 只接受公开测试编号。新增 HintlessChannelBegin / Generate / Close 只暴露公开参数、证明、公钥、HPKE 密文、公共材料和回执，没有明文种子入口。未接入可信证明策略的客户端不得提交私密种子。内部 GenerateMaterial 的指针参数仍仅供可信地址空间使用。
+保留的 `HintlessPublicMaterialTest` 只接受公开测试编号。`HintlessChannelBegin / Generate / Close` 只在 enclave 边界暴露公开参数、报告、公钥、HPKE 密文、公共材料和回执，没有明文种子入口。研究驱动程序的明文种子仅进入逻辑客户端宿主进程，随后被封装并清理；它不是普通 PIR 服务器的输入，也不是生产网络接口。
 
 独立 s/v 阻断原稿被指出的直接掩蔽项抵消路径，不构成完整联合视图、多查询、侧信道或恶意服务端安全证明。此移植需要独立密码实现审计。缓冲区显式清理也不是编译器和平台级安全擦除证明。
 
@@ -51,6 +53,7 @@
 | material_channel.* | 证明校验门控、配置/材料/挑战/公钥绑定、HPKE 种子解密、生成回执、精确重试缓存 |
 | installation* / client_journal* | 真实 PIR 安装后签名、客户端 CNG 验签与一次性门控、可信客户端文件系统上的持久化状态 |
 | lifecycle_test_driver.* / validate_lifecycle.ps1 | 固定公开种子的跨平台安装、日志、查询完整验证与安装反例 |
+| validate_private_backend.ps1 | 私密随机种子经过实际 VBS 的完整闭环与多轮统计；输出研究边界、哈希和分阶段时延 |
 | channel_enclave.cc | 真正的加密工厂 ABI，输入快照、非调试校验、本机报告验证、串行锁 |
 | channel_test_host.cc / validate_channel.ps1 | 公开测试种子的 native/enclave 加密路径验证；测试适配器不提供真实证明认证 |
 | probe_abi.h / material_test_abi.h | 有界、无嵌套指针的 ABI；材料测试入口只用公开固定种子 |
@@ -87,15 +90,16 @@ $thumbprint = & "$out\source\create_test_certificate.ps1"
 & "$out\source\validate_interop.ps1" -Backend native
 & "$out\source\validate_channel.ps1" -Backend native
 & "$out\source\run_probe.ps1" -BuildDir $out
+& "$out\source\validate_private_backend.ps1" -Runs 10
 ```
 
-构建覆盖指定目录的产物，重建后必须重新签名。证书有效期 90 天，仅用于本地开发。SignTool 退出码 2 为完成但有警告，脚本同时核对嵌入证书指纹；签名不等于系统已接受它。最后一条命令当前因加载错误 577 返回非零。
+构建覆盖指定目录的产物，重建后必须重新签名。证书有效期 90 天，仅用于本地开发。SignTool 退出码 2 表示完成但带警告，脚本同时核对嵌入证书指纹。当前本机已接受测试签名 DLL，并通过真实 VBS 探针与私密研究后端验证。
 
 原库固定版本为 shell-encryption 3b1bdfad1bf67a1414cce7bc0684a3cffd231aa3。固定参数来自 local_material::ParametersForProfile，支持 functional 和 8mb；没有宣称支持任意 HintlessPIR 参数。
 
 ## 本机固件步骤
 
-用户已授权配置本机研究环境，9 月 18 日实际以管理员权限执行 bcdedit /set TESTSIGNING ON；Windows 因 Secure Boot 拒绝，未修改启动项。当时 TPM 正常、C/D 盘未加密（历史状态，脚本会再次核对）。9 月 20 日实查最后启动为 9 月 19 日 11:57:56，但 Secure Boot 仍为 1、VBS/HVCI 运行，最新 DLL 仍加载失败。本会话没有执行重启或关闭保护。
+本机已按微软本地开发流程临时关闭 Secure Boot、开启 TESTSIGNING，并保持 VBS/HVCI 运行。该状态只用于论文实验；恢复日常安全配置时应关闭 TESTSIGNING 并重新启用 Secure Boot。
 
 微软本地开发流程要求关闭 Secure Boot、开启 TESTSIGNING、重启，同时保持 Memory Integrity 开启。固件菜单无法由本会话操作，按以下顺序完成：
 
@@ -125,16 +129,16 @@ $thumbprint = & "$out\source\create_test_certificate.ps1"
 & 'D:\04_DATA\ACM TOPS\native_tee_build\source\validate_channel.ps1' -Backend enclave
 ```
 
-需要实际看到 probe_validated=true、enclave 内 68 项基础检查通过，以及 enclave 模式的两组正确结果。加密 enclave 测试仍只使用公开种子，其宿主仅检查报告格式/绑定，不验证远程平台签名，不能代替真实客户端验证器。可能仍有后续平台或运行时错误，须如实处理，不以原生模式代替。
+需要实际看到 `probe_validated=true`、enclave 内 68 项基础检查通过，以及 enclave 模式的两组正确结果。`validate_channel.ps1` 的回归路径使用公开种子；`validate_private_backend.ps1` 使用新生成的随机种子。两者的宿主均只检查本机报告格式、绑定与非调试声明，不验证远程平台签名，不能代替真实客户端验证器。
 
 恢复环境时，管理员执行 bcdedit /set TESTSIGNING OFF，正常重启并恢复固件 Secure Boot；再核对 Memory Integrity 状态。此后测试签名 DLL 通常无法继续加载。
 
-## 真实私密后端仍需完成
+## 论文实验之外仍未覆盖
 
 - 客户端验证 enclave 身份、版本、非调试标志和平台证明链，防止宿主伪造或替换通道公钥。
-- 将已有 HPKE、生成/安装回执及日志接入真实证明策略与正式客户端传输、可信公钥分发和密钥轮换。
+- 将已有 HPKE、生成/安装回执及日志接入生产网络传输、可信公钥分发和密钥轮换。当前逻辑客户端和服务器由同一 Linux 测试程序编排，因此不能声称操作系统级客户端/服务器进程隔离。
 - 在已测单客户端并发抢用、精确重试、崩溃/重启之外，完善服务端多租户、超时、长期日志管理与快照回滚方案，移除或隔离公开测试接口。
-- enclave 实际内存/时延/吞吐量、并发客户端与完整通信账本，包括证明、通道建立、回执和静态分量。
+- 并发客户端、长时间压力、完整网络通信账本和生产运维。当前已经记录 enclave 冷启动、通道建立、材料生成、安装、查询、服务器处理和恢复的本地分阶段时延。
 - 侧信道和实现审计、具体安全参数估计、正确性失败率推导与完整多查询安全分析。
 
 EnclaveVerifyAttestationReport 只验证本系统的报告；其返回成功不等于远程客户端验证成功。宿主 JSON 不是安全证明。关闭 Secure Boot 的测试签名环境可用于开发执行验证，不能直接当成生产平台信任链的证据。当前 P-256 HPKE 通道提供的是经典密码学安全目标，不支持端到端后量子安全主张。

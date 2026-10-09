@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "timestamp_utc": "2026-09-22T06:33:28.6369903Z",
+  "scope": "paper-grade-local-research-prototype",
+  "windows_build_w4_wx_passed": true,
+  "vbs_probe_passed": true,
+  "public_channel_regression_passed": true,
+  "public_lifecycle_regression_passed": true,
+  "private_profiles": 2,
+  "private_correct_queries": 60.0,
+  "private_all_correct": true,
+  "client_journal_test_passed": true,
+  "targeted_whitespace_check_passed": true,
+  "private_seed_or_request_files_persisted": 0,
+  "nonempty_private_backend_logs": 0,
+  "real_attestation_verified": false,
+  "client_server_process_isolation": false,
+  "enclave_sha256": "D04404EDEF101F064DD591B3B6460E515D6CDAE7BBC23C4E5C14542BF901B81B",
+  "private_result_sha256": "C044A72324CB6656F47309503395006C2EABD9AB9C5817AAB763FE1155761685"
+}

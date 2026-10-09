@@ -7,6 +7,7 @@
 #include <io.h>
 #include <stdio.h>
 #include <string.h>
+#include <chrono>
 #include <memory>
 #include <vector>
 #include <ntenclv.h>
@@ -108,6 +109,17 @@ ChannelHello Hello(const PublicMaterialTestRequest& input, BYTE master[32]) {
   for (ULONG i = 0; i < 32; ++i) hello.challenge[i] = static_cast<BYTE>(i + 11 + input.case_index);
   return hello;
 }
+ChannelHello Hello(const PrivateResearchMaterialRequest& input) {
+  ChannelHello hello{};
+  hello.version = 1; hello.size = sizeof(hello); hello.config = input.config;
+  CopyMemory(hello.material_id, input.material_id, 32);
+  CopyMemory(hello.challenge, input.challenge, 32);
+  return hello;
+}
+uint64_t ElapsedNs(std::chrono::steady_clock::time_point start) {
+  return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+      std::chrono::steady_clock::now() - start).count());
+}
 bool GenerateFixture(const PublicMaterialTestRequest& input, RawMaterial* material) {
   BYTE master[32];
   auto hello = Hello(input, master);
@@ -206,6 +218,81 @@ int Lifecycle(const wchar_t* dll) {
   if (dll && SUCCEEDED(hr)) hr = enclave.Call("HintlessChannelClose", nullptr);
   if (fwrite(&hr, 1, sizeof(hr), stdout) != sizeof(hr) || fflush(stdout)) return 8;
   // Authentication rejection is returned in-band for negative test cases.
+  return 0;
+}
+
+// Local research client. The parent supplies fresh random client data over an
+// inherited pipe. Only the sealed request crosses the enclave boundary; the
+// seed is never emitted in the public material stream.
+int PrivateResearchLifecycle(const wchar_t* dll) {
+  if (_setmode(_fileno(stdin), _O_BINARY) == -1 ||
+      _setmode(_fileno(stdout), _O_BINARY) == -1) return 2;
+  PrivateResearchLifecycleInput input{};
+  if (fread(&input, 1, sizeof(input), stdin) != sizeof(input) ||
+      input.request.version != 1 || input.request.size != sizeof(input.request) ||
+      !IsZero(input.reserved, sizeof(input.reserved))) return 3;
+  PrivateResearchLifecycleMetrics metrics{};
+  metrics.version = 1; metrics.size = sizeof(metrics);
+  const auto total_start = std::chrono::steady_clock::now();
+  BYTE master[32];
+  CopyMemory(master, input.request.master_seed, sizeof(master));
+  SecureZeroMemory(input.request.master_seed, sizeof(input.request.master_seed));
+  const ChannelHello hello = Hello(input.request);
+  auto begin = std::make_unique<ChannelBeginExchange>();
+  begin->request = hello;
+  auto generate = std::make_unique<ChannelGenerateExchange>();
+  PublicEnclaveRun enclave;
+  MaterialChannelReceiver receiver;
+  MaterialChannelClient client;
+  PublicFixtureVerifier fixture;
+  PublicReportBindingOnlyVerifier binding_only;
+
+  auto stage_start = std::chrono::steady_clock::now();
+  HRESULT hr = dll ? enclave.Load(dll) : S_OK;
+  metrics.enclave_load_ns = dll ? ElapsedNs(stage_start) : 0;
+  stage_start = std::chrono::steady_clock::now();
+  if (SUCCEEDED(hr)) hr = dll ? enclave.Call("HintlessChannelBegin", begin.get()) :
+      FixtureOffer(receiver, begin->request, &begin->reply);
+  metrics.channel_begin_ns = ElapsedNs(stage_start);
+  stage_start = std::chrono::steady_clock::now();
+  if (SUCCEEDED(hr)) hr = client.Seal(begin->request, begin->reply,
+      dll ? static_cast<const AttestationVerifier&>(binding_only) : fixture,
+      master, &generate->request);
+  metrics.client_seal_ns = ElapsedNs(stage_start);
+  SecureZeroMemory(master, sizeof(master));
+  stage_start = std::chrono::steady_clock::now();
+  if (SUCCEEDED(hr)) hr = dll ? enclave.Call("HintlessChannelGenerate", generate.get()) :
+      receiver.Generate(generate->request, &generate->material, &generate->receipt);
+  metrics.enclave_generate_ns = ElapsedNs(stage_start);
+  stage_start = std::chrono::steady_clock::now();
+  if (SUCCEEDED(hr)) hr = client.AcceptReceipt(generate->receipt);
+  metrics.receipt_accept_ns = ElapsedNs(stage_start);
+  InstallationBinding binding{};
+  if (SUCCEEDED(hr)) hr = client.BeginInstallation(input.server_epoch, &binding);
+  if (fwrite(&hr, 1, sizeof(hr), stdout) != sizeof(hr)) return 4;
+  if (FAILED(hr)) {
+    fflush(stdout);
+    fprintf(stderr, "Private research preparation failed at %s: 0x%08lX\n",
+            enclave.stage, static_cast<ULONG>(hr));
+    SecureZeroMemory(&input, sizeof(input));
+    return 5;
+  }
+  stage_start = std::chrono::steady_clock::now();
+  if (fwrite(&generate->material, 1, sizeof(generate->material), stdout) != sizeof(generate->material) ||
+      fwrite(&binding, 1, sizeof(binding), stdout) != sizeof(binding) || fflush(stdout)) return 6;
+  InstallationAck ack{};
+  if (fread(&ack, 1, sizeof(ack), stdin) != sizeof(ack)) return 7;
+  hr = client.AcceptInstallation(ack, input.pinned_server_key);
+  metrics.installation_roundtrip_ns = ElapsedNs(stage_start);
+  if (SUCCEEDED(hr) && !client.ReadyForQuery()) hr = E_FAIL;
+  if (SUCCEEDED(hr)) hr = client.ConsumeForQuery();
+  if (SUCCEEDED(hr) && (client.ReadyForQuery() || SUCCEEDED(client.ConsumeForQuery()) ||
+      SUCCEEDED(client.AcceptInstallation(ack, input.pinned_server_key)))) hr = E_FAIL;
+  if (dll && SUCCEEDED(hr)) hr = enclave.Call("HintlessChannelClose", nullptr);
+  metrics.total_ns = ElapsedNs(total_start);
+  SecureZeroMemory(&input, sizeof(input));
+  if (fwrite(&hr, 1, sizeof(hr), stdout) != sizeof(hr) ||
+      fwrite(&metrics, 1, sizeof(metrics), stdout) != sizeof(metrics) || fflush(stdout)) return 8;
   return 0;
 }
 
@@ -321,6 +408,10 @@ bool Tests(ULONG* rfc_checks) {
 int wmain(int argc, wchar_t** argv) {
   if (argc == 2 && wcscmp(argv[1], L"--native-lifecycle") == 0) return Lifecycle(nullptr);
   if (argc == 3 && wcscmp(argv[1], L"--enclave-lifecycle") == 0) return Lifecycle(argv[2]);
+  if (argc == 2 && wcscmp(argv[1], L"--private-native-lifecycle") == 0)
+    return PrivateResearchLifecycle(nullptr);
+  if (argc == 3 && wcscmp(argv[1], L"--private-enclave-lifecycle") == 0)
+    return PrivateResearchLifecycle(argv[2]);
   if (argc == 1) {
     ULONG rfc_checks = 0;
     const bool success = Tests(&rfc_checks);

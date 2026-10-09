@@ -532,9 +532,14 @@ Parameters DemoParameters() {
 absl::StatusOr<Parameters> ParametersForProfile(absl::string_view profile) {
   auto params = DemoParameters();
   if (profile == "functional") return params;
-  if (profile != "8mb") return absl::InvalidArgumentError("Profile must be functional or 8mb.");
-  params.db_rows = 1024;
-  params.db_cols = 1024;
+  int database_side = 0;
+  if (profile == "8mb") database_side = 1024;
+  else if (profile == "512mb") database_side = 8192;
+  else if (profile == "2gb") database_side = 16384;
+  else if (profile == "8gb") database_side = 32768;
+  else return absl::InvalidArgumentError("Profile must be functional, 8mb, 512mb, 2gb, or 8gb.");
+  params.db_rows = database_side;
+  params.db_cols = database_side;
   params.lwe_secret_dim = 1024;
   params.linpir_params.rows_per_block = 1024;
   // Two 8192-NTT-friendly primes keep the manuscript's two-branch layout
